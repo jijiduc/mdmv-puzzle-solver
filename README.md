@@ -102,7 +102,7 @@ Key definitions:
 - Ability to handle puzzles with varying numbers of pieces
 
 ## Team Members
-[Jeremy Duc](https://github.com/jijiduc) et [Alexandre Venturi](https://github.com/mastermeter)
+[Jeremy Duc](https://github.com/jijiduc) & [Alexandre Venturi](https://github.com/mastermeter)
 
 ## References
 [Project description](https://isc.hevs.ch/learn/pluginfile.php/5191/mod_resource/content/0/Project.pdf), the provided PDF document in the course
