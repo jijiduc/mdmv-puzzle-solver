@@ -22,6 +22,7 @@ To approach this problem, we consider several key questions:
 ## Problem Formalization
 
 When capturing images of puzzle pieces, we should:
+
 - Minimize variability in photovolumetric parameters
 - Use a unified background color that contrasts with the puzzle pieces (especially important for monochrome puzzles)
 - Ensure all pieces are visible and well-separated in the input image
@@ -29,6 +30,7 @@ When capturing images of puzzle pieces, we should:
 The device chosen for taking the images is a Samsung Galaxy S24 Ultra.
 
 Key definitions:
+
 - **Piece**: A 3D form bounded by a defined perimeter
 - **Border**: An element formed from an n-cutting from the perimeter of a piece
 - **Piece Differentiation**: Pieces can be distinguished by analyzing their boundaries and colors
@@ -69,31 +71,39 @@ Key definitions:
 ## Project Timeline
 
 ### Week 1
+
 - Set up project repository and documentation
 - Do points 1 & 2
 
 ### Week 2
+
 - Do point 3
 
 ### Week 3
+
 - Do point 4 & 5
 
 ### Week 4
+
 - Peer presentation
 - Do point 6
 
 ### Week 5
+
 - At disposition if necessary
 
 ### Week 6
+
 - At disposition if necessary
 
 ## Implementation Tools
+
 - OpenCV for image processing and computer vision tasks
 - Python as the primary programming language
 - Additional libraries as needed for specific algorithms (under the aproval of Prof.Lettry)
 
 ## Evaluation Metrics
+
 - Accuracy of piece matching
 - Completeness of puzzle reconstruction
 - Quality of the final generated image
@@ -102,7 +112,9 @@ Key definitions:
 - Ability to handle puzzles with varying numbers of pieces
 
 ## Team Members
+
 [Jeremy Duc](https://github.com/jijiduc) & [Alexandre Venturi](https://github.com/mastermeter)
 
 ## References
+
 [Project description](https://isc.hevs.ch/learn/pluginfile.php/5191/mod_resource/content/0/Project.pdf), the provided PDF document in the course
