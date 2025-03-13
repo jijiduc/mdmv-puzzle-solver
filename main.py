@@ -88,6 +88,22 @@ def find_piece(image, contour, min_area=1000, min_perimeter=100, is_closed_thres
     
     return piece
 
+def debug_contours(image, contours, rejected_reasons):
+    """Visualise les contours avec des codes couleur selon la raison du rejet"""
+    debug_img = image.copy()
+    
+    for i, (contour, reason) in enumerate(zip(contours, rejected_reasons)):
+        color = (0, 255, 0)  # Vert pour les contours valides
+        if reason == "too_small":
+            color = (0, 0, 255)  # Rouge pour les contours trop petits
+        elif reason == "not_closed":
+            color = (255, 0, 0)  # Bleu pour les contours non fermés
+        # etc.
+        
+        cv2.drawContours(debug_img, [contour], 0, color, 2)
+        
+    save_image(debug_img, "debug/contours_debug.jpg")
+
 
 def main():
     """Main function for the program."""
@@ -101,11 +117,47 @@ def main():
     
         
     w_1 = read_image("picture/puzzle_24-1/b-2.jpg")
-    w_1 = resize_image(w_1, 1250, 1250)
+    # w_1 = resize_image(w_1, 1250, 1250)
     
     # find the contour of the pieces on the unified background
     w_1_c = find_contour(w_1)
-    show_contour(w_1, w_1_c)
+    
+    # Débogage: enregistrez une image avec tous les contours
+    debug_img = w_1.copy()
+    cv2.drawContours(debug_img, w_1_c, -1, (0, 255, 0), 1)
+    save_image(debug_img, "debug/all_contours.jpg")
+    
+    # Débogage: comptez les rejets par critère
+    area_rejects = 0
+    perimeter_rejects = 0
+    compactness_rejects = 0
+    points_rejects = 0
+    
+    for contour in w_1_c:
+        if len(contour) < 5:
+            points_rejects += 1
+            continue
+            
+        area = cv2.contourArea(contour)
+        if area < 1000:
+            area_rejects += 1
+            continue
+            
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter < 100:
+            perimeter_rejects += 1
+            continue
+            
+        compactness = 4 * np.pi * area / (perimeter * perimeter)
+        if compactness < 0.02:
+            compactness_rejects += 1
+            continue
+    
+    print(f"Rejets par critère:")
+    print(f"  - Points insuffisants: {points_rejects}")
+    print(f"  - Aire trop petite: {area_rejects}")
+    print(f"  - Périmètre trop petit: {perimeter_rejects}")
+    print(f"  - Compacité insuffisante: {compactness_rejects}")
     
     # Find the pieces in the image using the find_piece function and storing them in a list
     w_1_p = [find_piece(w_1, contour) for contour in w_1_c]
