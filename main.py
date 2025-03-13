@@ -1,59 +1,122 @@
 """This file is the main file for the project. It is responsible for running the program and handling the pictures inputs."""
 
-import sys
-import os
-import time
 import random
 import cv2
 import numpy as np
 import matplotlib
 
-def read_image(image_path):
-    """Reads an image from the given path and returns the image."""
-    image = cv2.imread(image_path)
-    return image
+from image_processing import read_image, show_image, resize_image, save_image, pre_process_image, find_contour, show_contour
 
-def show_image(image):
-    """Displays the given image."""
-    cv2.imshow("Image", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+# function to show the individual found pieces in image file and saving them in a directory
+def save_pieces(pieces):
+    """
+    Saves the individual found pieces in image files.
+    Skips any None values in the pieces list.
+    """
+    piece_count = 0
+    for piece in pieces:
+        if piece is not None:
+            path = f"pieces/piece_{piece_count}.jpg"
+            # Switched parameter order to match your save_image function definition
+            save_image(piece, path)
+            piece_count += 1
+    print(f"Saved {piece_count} valid pieces out of {len(pieces)} total contours.")
 
-def resize_image(image, width, height):
-    """Resizes the given image to the given width and height."""
-    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
 
-def save_image(image, image_path):
-    """Saves the given image to the given path."""
-    cv2.imwrite(image_path, image)
 
-# function to find the contour of the pieces on the unified background, using otsu thresholding
-def find_contour(image):
-    """Finds the contours of the pieces on the image."""
-    # grayscale the image
-    # cv2.cvtColor(src, code[, dst[, dstCn]]) → dst
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # apply otsu thresholding
-    # cv2.threshold(src, thresh, maxval, type[, dst]) → retval, dst
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    # find contours
-    # cv2.findContours(image, mode, method[, contours[, hierarchy[, offset]]]) → contours, hierarchy
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    return contours
+# stochastic function to find the missing points in the contour
+def find_missing_points(contour, n_missing_points):
+    """Finds the missing points in the contour."""
+    # get the number of points in the contour
+    n_points = len(contour)
+    # get the indices of the points in the contour
+    indices = list(range(n_points))
+    # shuffle the indices
+    random.shuffle(indices)
+    # get the missing points
+    missing_points = [contour[i] for i in indices[:n_missing_points]]
+    return missing_points
 
-def show_contour(image, contours):
-    """Shows the contour of the pieces on the image."""
-    cv2.drawContours(image, contours, -1, (0, 255, 0), 3)
-    show_image(image)
-
+# function to find the piece in the image using the contour
+def find_piece(image, contour, min_area=1000, min_perimeter=100, is_closed_threshold=0.02):
+    """
+    Extracts a puzzle piece from the image using the contour if it represents a valid piece.
+    
+    Args:
+        image: Source image from which to extract the piece
+        contour: Contour of the potential puzzle piece
+        min_area: Minimum area of a contour to be considered a piece
+        min_perimeter: Minimum perimeter length to be considered a piece
+        is_closed_threshold: Threshold for determining if a contour is closed (0-1)
+        
+    Returns:
+        The extracted puzzle piece image or None if not a valid piece
+    """
+    # Make sure contour has enough points
+    if len(contour) < 5:
+        return None
+    
+    # Check area and perimeter
+    area = cv2.contourArea(contour)
+    perimeter = cv2.arcLength(contour, True)
+    
+    if area < min_area or perimeter < min_perimeter:
+        return None
+    
+    # Check if the contour is approximately closed using compactness measure
+    # For a perfect circle, area/(perimeter^2) = 1/(4*pi)
+    # For real puzzles, the ratio will be smaller but still significant
+    compactness = 4 * np.pi * area / (perimeter * perimeter)
+    
+    if compactness < is_closed_threshold:
+        # This contour is likely not a closed shape (or very irregular)
+        return None
+    
+    # Get the bounding rectangle of the contour
+    x, y, w, h = cv2.boundingRect(contour)
+    
+    # Create a mask for the piece
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    cv2.drawContours(mask, [contour], 0, 255, -1)
+    
+    # Crop the mask and the image to the bounding rectangle
+    mask_roi = mask[y:y+h, x:x+w]
+    image_roi = image[y:y+h, x:x+w]
+    
+    # Apply the mask to extract the piece
+    piece = cv2.bitwise_and(image_roi, image_roi, mask=mask_roi)
+    
+    return piece
 
 
 def main():
     """Main function for the program."""
-    w_1 = read_image("picture/puzzle_24-1/w-1.jpg")
+    # Make sure the pieces directory exists
+    import os
+    if not os.path.exists("pieces"):
+        os.makedirs("pieces")
+    # clean the pieces directory
+    for file in os.listdir("pieces"):
+        os.remove(os.path.join("pieces", file))
+    
+        
+    w_1 = read_image("picture/puzzle_24-1/b-2.jpg")
     w_1 = resize_image(w_1, 1250, 1250)
-    w_1_contour = find_contour(w_1)
-    show_contour(w_1, w_1_contour)
+    
+    # find the contour of the pieces on the unified background
+    w_1_c = find_contour(w_1)
+    show_contour(w_1, w_1_c)
+    
+    # Find the pieces in the image using the find_piece function and storing them in a list
+    w_1_p = [find_piece(w_1, contour) for contour in w_1_c]
+    
+    # Filter out None values before saving
+    valid_pieces = [piece for piece in w_1_p if piece is not None]
+    print(f"Found {len(valid_pieces)} valid pieces out of {len(w_1_c)} contours")
+    
+    # save the pieces in image files
+    save_pieces(w_1_p)
+
 
 
 if __name__ == '__main__':
