@@ -22,21 +22,6 @@ def save_pieces(pieces):
             piece_count += 1
     print(f"Saved {piece_count} valid pieces out of {len(pieces)} total contours.")
 
-
-
-# stochastic function to find the missing points in the contour
-def find_missing_points(contour, n_missing_points):
-    """Finds the missing points in the contour."""
-    # get the number of points in the contour
-    n_points = len(contour)
-    # get the indices of the points in the contour
-    indices = list(range(n_points))
-    # shuffle the indices
-    random.shuffle(indices)
-    # get the missing points
-    missing_points = [contour[i] for i in indices[:n_missing_points]]
-    return missing_points
-
 # function to find the piece in the image using the contour
 def find_piece(image, contour, min_area=1000, min_perimeter=100, is_closed_threshold=0.02):
     """
@@ -116,12 +101,13 @@ def main():
         os.remove(os.path.join("pieces", file))
     
         
-    w_1 = read_image("picture/puzzle_24-1/b-2.jpg")
-    # w_1 = resize_image(w_1, 1250, 1250)
-    
+    w_1 = read_image("picture/puzzle_49-1/b-1.jpg")
+    w_1 = resize_image(w_1, 1250, 1250)
+
     # find the contour of the pieces on the unified background
     w_1_c = find_contour(w_1)
-    
+    show_contour(w_1, w_1_c)
+
     # Débogage: enregistrez une image avec tous les contours
     debug_img = w_1.copy()
     cv2.drawContours(debug_img, w_1_c, -1, (0, 255, 0), 1)
@@ -158,7 +144,7 @@ def main():
     print(f"  - Aire trop petite: {area_rejects}")
     print(f"  - Périmètre trop petit: {perimeter_rejects}")
     print(f"  - Compacité insuffisante: {compactness_rejects}")
-    
+
     # Find the pieces in the image using the find_piece function and storing them in a list
     w_1_p = [find_piece(w_1, contour) for contour in w_1_c]
     
