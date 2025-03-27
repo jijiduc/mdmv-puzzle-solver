@@ -1,1 +1,2 @@
-pieces/*
+debug/*
+__pycache__/*

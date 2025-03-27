@@ -31,8 +31,12 @@ The device chosen for taking the images is a Samsung Galaxy S24 Ultra.
 
 Key definitions:
 
-- **Piece**: A 3D form bounded by a defined perimeter
+- **Piece**: A 2D form bounded by a defined perimeter
+- **Contour** : A contour is a continuus and finite line forming the perimeter of a piece
 - **Border**: An element formed from an n-cutting from the perimeter of a piece
+- **straight border** : A border where the shape of is a straight line
+- **bump border** : A border where there is a bump coming out of a straight border
+- **cavity border** : A border where there is a cavity into a straight border
 - **Piece Differentiation**: Pieces can be distinguished by analyzing their boundaries and colors
 - **Puzzle**: A finite ordered group of pieces whose boundaries match perfectly with each other without gaps
 - **Classic Puzzle**: A puzzle with pieces of varied forms, bounded by 4 segments forming a rectangle, with the assembled pieces depicting a colored image
