@@ -24,7 +24,7 @@ To approach this problem, we consider several key questions:
 When capturing images of puzzle pieces, we should:
 
 - Minimize variability in photovolumetric parameters
-- Use a unified background color that contrasts with the puzzle pieces (especially important for monochrome puzzles)
+- Use a unified background color that contrasts with the puzzle pieces (especially important for monochrome puzzles) : our current choice is a black piece of fabric
 - Ensure all pieces are visible and well-separated in the input image
 
 The device chosen for taking the images is a Samsung Galaxy S24 Ultra.
@@ -103,7 +103,7 @@ Key definitions:
 ## Implementation Tools
 
 - OpenCV for image processing and computer vision tasks
-- Python as the primary programming language
+- Python 3.13.2 as the primary programming language
 - Additional libraries as needed for specific algorithms (under the aproval of Prof.Lettry)
 
 ## Evaluation Metrics
