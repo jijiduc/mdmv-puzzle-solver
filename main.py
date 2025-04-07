@@ -1,222 +1,317 @@
 """
-Main entry point for the puzzle piece detection system
+Enhanced puzzle piece detection and analysis system with adaptive parameter optimization
+
+This script processes images of puzzle pieces on a dark background and
+detects individual pieces using enhanced computer vision techniques.
+All terminal output is also saved to a log file.
 """
 
-import os
-import sys
-import argparse
-import time
 import cv2
 import numpy as np
-from typing import List, Dict, Any
+import os
+import argparse
+import time
+import sys
+import logging
+import shutil
+from typing import Optional
+from datetime import datetime
 
+# Import puzzle detection modules
 from src.config.settings import Config
 from src.core.processor import PuzzleProcessor
 from src.utils.image_utils import read_image
 
 
-# Define color codes for terminal output
-class TermColors:
-    BLUE = "\033[94m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    RED = "\033[91m"
-    PURPLE = "\033[95m"
-    BOLD = "\033[1m"
-    RESET = "\033[0m"
+def setup_logging(log_dir="logs"):
+    """
+    Set up logging to both console and file with proper encoding
+    
+    Args:
+        log_dir: Directory to save log files
+    
+    Returns:
+        Path to the log file
+    """
+    # Create logs directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create a timestamped log file name
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_file = os.path.join(log_dir, f"puzzle_detection_{timestamp}.log")
+    
+    # Configure root logger to write to both console and file
+    # Use UTF-8 encoding for the file handler
+    handlers = [
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, encoding='utf-8')
+    ]
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s - %(message)s',
+        handlers=handlers
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Logging to file: {log_file}")
+    
+    return log_file
 
 
-def print_info(message: str) -> None:
-    """Print an info message"""
-    print(f"{TermColors.BLUE}ℹ️  {message}{TermColors.RESET}")
-
-
-def print_success(message: str) -> None:
-    """Print a success message"""
-    print(f"{TermColors.GREEN}✅ {message}{TermColors.RESET}")
-
-
-def print_warning(message: str) -> None:
-    """Print a warning message"""
-    print(f"{TermColors.YELLOW}⚠️  {message}{TermColors.RESET}")
-
-
-def print_error(message: str) -> None:
-    """Print an error message"""
-    print(f"{TermColors.RED}❌ {message}{TermColors.RESET}")
-
-
-def print_header(message: str) -> None:
-    """Print a header message"""
-    print(f"{TermColors.PURPLE}{TermColors.BOLD}🔷 {message}{TermColors.RESET}")
-
-def clean_debug_dir(debug_dir: str) -> None:
-    """Clean the debug directory by removing .jpg files"""
-    if not os.path.exists(debug_dir):
-        return
-        
-    for filename in os.listdir(debug_dir):
-        if filename.endswith(".jpg") or filename.endswith(".json"):
-            file_path = os.path.join(debug_dir, filename)
+def clear_directory(directory_path):
+    """
+    Clear all files in a directory without removing the directory itself
+    
+    Args:
+        directory_path: Path to the directory to clear
+    """
+    if os.path.exists(directory_path):
+        for file_name in os.listdir(directory_path):
+            file_path = os.path.join(directory_path, file_name)
             try:
-                os.remove(file_path)
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
             except Exception as e:
-                print_warning(f"Error removing file {file_path}: {str(e)}")
-                
-def main() -> None:
-    """Main function"""
-    # Set up command line arguments
-    parser = argparse.ArgumentParser(description="Puzzle piece detector")
-    parser.add_argument(
-        "--image",
-        type=str,
-        default=None,
-        help="Path to the puzzle image"
-    )
-    parser.add_argument(
-        "--pieces",
-        type=int,
-        default=None,
-        help="Expected number of pieces in the puzzle"
-    )
-    parser.add_argument(
-        "--debug-dir",
-        type=str,
-        default="debug",
-        help="Directory to save debug outputs"
-    )
-    parser.add_argument(
-        "--extract",
-        action="store_true",
-        help="Extract individual pieces to separate files"
-    )
-    parser.add_argument(
-        "--extract-dir",
-        type=str,
-        default="extracted_pieces",
-        help="Directory to save extracted pieces"
-    )
-    parser.add_argument(
-        "--use-multiprocessing",
-        action="store_true",
-        help="Use multiprocessing for faster detection"
-    )
-    parser.add_argument(
-        "--view",
-        action="store_true",
-        help="View results (opens image windows)"
-    )
-    parser.add_argument(
-        "--auto-threshold",
-        action="store_true",
-        help="Automatically select the best thresholding method (Otsu or adaptive)"
-    )
-    parser.add_argument(
-        "--no-mean-filter",
-        action="store_true",
-        help="Disable filtering based on mean contour area"
-    )
-    parser.add_argument(
-        "--mean-threshold",
-        type=float,
-        default=2.0,
-        help="Standard deviation threshold for mean area filtering (default: 2.0)"
-    )
-    parser.add_argument(
-        "--use-sobel",
-        action="store_true",
-        help="Use the Sobel pipeline (Gray → Blurred → Sobel → Contrasted → Dilated → Eroded)"
-    )
+                logging.error(f"Error removing {file_path}: {e}")
+    else:
+        # Create the directory if it doesn't exist
+        os.makedirs(directory_path, exist_ok=True)
 
-    args = parser.parse_args()
 
-    # Initialize configuration
+def parse_arguments():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Enhanced Puzzle Piece Detector with adaptive parameter optimization"
+    )
+    
+    # Required parameters
+    parser.add_argument("--image", required=True, help="Path to the puzzle image")
+    
+    # Optional parameters
+    parser.add_argument("--pieces", type=int, help="Expected number of pieces in the puzzle")
+    parser.add_argument("--debug-dir", default="debug", help="Directory to save debug outputs")
+    parser.add_argument("--log-dir", default="logs", help="Directory to save log files")
+    parser.add_argument("--extract", action="store_true", help="Extract individual pieces to separate files")
+    parser.add_argument("--extract-dir", default="extracted_pieces", help="Directory to save extracted pieces")
+    parser.add_argument("--use-multiprocessing", action="store_true", help="Use multiprocessing for faster detection")
+    parser.add_argument("--view", action="store_true", help="View results in image windows")
+    parser.add_argument("--auto-threshold", action="store_true", help="Applies both Otsu and adaptive thresholding")
+    parser.add_argument("--no-mean-filter", action="store_true", help="Disable filtering by mean area")
+    parser.add_argument("--mean-threshold", type=float, default=1.5, help="Standard deviation threshold for mean filtering")
+    parser.add_argument("--adaptive-preprocessing", action="store_true", help="Use adaptive preprocessing")
+    parser.add_argument("--optimize-parameters", action="store_true", help="Optimize parameters for the image")
+    parser.add_argument("--multi-pass", action="store_true", help="Use multi-pass detection")
+    parser.add_argument("--analyze-image", action="store_true", help="Analyze image characteristics")
+    
+    return parser.parse_args()
+
+
+def create_config(args):
+    """
+    Create configuration based on command line arguments
+    
+    Args:
+        args: Command line arguments
+    
+    Returns:
+        Config object
+    """
     config = Config()
+    
+    # Update config from command-line arguments
     config.DEBUG_DIR = args.debug_dir
-    config.USE_MULTIPROCESSING = args.use_multiprocessing
     config.USE_AUTO_THRESHOLD = args.auto_threshold
     config.USE_MEAN_FILTERING = not args.no_mean_filter
     config.MEAN_DEVIATION_THRESHOLD = args.mean_threshold
-    config.USE_SOBEL_PIPELINE = args.use_sobel  # Add the new Sobel pipeline flag
-
-    # Ensure debug directory exists
-    if not os.path.exists(config.DEBUG_DIR):
-        os.makedirs(config.DEBUG_DIR, exist_ok=True)
+    config.USE_MULTIPROCESSING = args.use_multiprocessing
     
-    # Clean debug directory
-    clean_debug_dir(config.DEBUG_DIR)
-
-    # Check if an image path was provided
-    if args.image is None:
-        print_error("No image path provided. Use --image to specify an image file.")
-        print_info("Example: python main.py --image path/to/puzzle.jpg")
-        return
-
-    # Check if the image exists
-    if not os.path.exists(args.image):
-        print_error(f"Image file not found: {args.image}")
-        return
-
-    print_header("Puzzle Piece Detector")
-    print_info(f"Processing image: {args.image}")
-    print_info(f"Debug output directory: {config.DEBUG_DIR}")
+    # New parameters for enhanced detection
+    config.USE_ADAPTIVE_PREPROCESSING = args.adaptive_preprocessing
+    config.USE_PARAMETER_OPTIMIZATION = args.optimize_parameters
+    config.USE_MULTI_PASS_DETECTION = args.multi_pass
     
-    if args.pieces:
-        print_info(f"Expected pieces: {args.pieces}")
+    return config
+
+
+def log_message(message):
+    """
+    Log a message to both console and file
+    
+    Args:
+        message: Message to log
+    """
+    logging.info(message)
+
+
+def display_results(results, expected_pieces: Optional[int] = None):
+    """
+    Display processing results in a formatted way
+    
+    Args:
+        results: Dictionary with processing results
+        expected_pieces: Expected number of pieces
+    """
+    pieces = results['pieces']
+    metrics = results['metrics']
+    
+    log_message("\n=== Puzzle Analysis Results ===")
+    log_message(f"Detected {len(pieces)} valid puzzle pieces")
+    
+    if expected_pieces:
+        detection_rate = len(pieces) / expected_pieces * 100
+        log_message(f"Detection rate: {detection_rate:.1f}%")
+    
+    log_message(f"Processing time: {results['processing_time']:.2f} seconds")
+    
+    # Print some statistics about the detected pieces
+    if pieces:
+        valid_pieces = sum(1 for p in pieces if p.is_valid)
+        log_message(f"Valid pieces: {valid_pieces}/{len(pieces)}")
         
-    if args.auto_threshold:
-        print_info("Using auto threshold selection")
-    
-    if config.USE_MEAN_FILTERING:
-        print_info(f"Using mean area filtering (threshold: {config.MEAN_DEVIATION_THRESHOLD} std dev)")
-    else:
-        print_info("Mean area filtering disabled")
+        if hasattr(pieces[0], 'validation_score'):
+            scores = [p.validation_score for p in pieces if hasattr(p, 'validation_score')]
+            if scores:
+                avg_score = sum(scores) / len(scores)
+                log_message(f"Average validation score: {avg_score:.2f}")
         
-    if config.USE_SOBEL_PIPELINE:
-        print_info("Using Sobel edge detection pipeline")
+        # Print border type distribution
+        if 'border_types' in metrics and metrics['border_types']:
+            border_types = metrics['border_types']
+            log_message(f"Border types: " + 
+                      f"straight={border_types.get('straight', 0)}, " +
+                      f"tab={border_types.get('tab', 0)}, " +
+                      f"pocket={border_types.get('pocket', 0)}")
+    
+    log_message("=== Analysis complete! ===")
 
+
+def view_images(results):
+    """
+    Display images in OpenCV windows
+    
+    Args:
+        results: Dictionary with processing results
+    """
+    # Display summary visualization
+    cv2.imshow("Puzzle Analysis Summary", results['visualizations']['summary'])
+    
+    # Display metrics visualization
+    cv2.imshow("Metrics", results['visualizations']['metrics'])
+    
+    # Wait for user to close windows
+    log_message("Press any key to close image windows and continue...")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def main():
+    """Main entry point for the puzzle piece detector"""
     # Start timing
     start_time = time.time()
-
-    # Create processor and process image
+    
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Set up logging to both console and file
+    log_file = setup_logging(args.log_dir)
+    
+    # Clear debug and extracted_pieces directories
+    log_message("Cleaning output directories...")
+    clear_directory(args.debug_dir)
+    if args.extract:
+        clear_directory(args.extract_dir)
+    
+    # Print initialization message
+    log_message("== Enhanced Puzzle Piece Detector ==")
+    log_message(f"Processing image: {args.image}")
+    log_message(f"Debug output directory: {args.debug_dir}")
+    log_message(f"Log file: {log_file}")
+    
+    if args.pieces:
+        log_message(f"Expected pieces: {args.pieces}")
+    
+    if args.no_mean_filter:
+        log_message(f"Mean area filtering: disabled")
+    else:
+        log_message(f"Using mean area filtering (threshold: {args.mean_threshold} std dev)")
+    
+    if args.adaptive_preprocessing:
+        log_message(f"Using adaptive preprocessing")
+    
+    if args.optimize_parameters:
+        log_message(f"Using parameter optimization")
+    
+    if args.multi_pass:
+        log_message(f"Using multi-pass detection")
+    
+    # Create configuration
+    config = create_config(args)
+    
+    # Create processor
     processor = PuzzleProcessor(config)
     
-    try:
-        results = processor.process_image(args.image, args.pieces)
+    # Analyze image characteristics if requested
+    if args.analyze_image:
+        log_message("Analyzing image characteristics...")
+        analysis = processor.analyze_image_characteristics(args.image)
         
-        # Extract pieces if requested
-        if args.extract:
-            processor.extract_pieces(results['pieces'], args.extract_dir)
+        log_message(f"Image contrast: {analysis['contrast']:.2f}")
+        log_message(f"Edge density: {analysis['edge_density']:.3f}")
+        log_message(f"Dark background: {analysis['is_dark_background']}")
+        log_message(f"Bimodal histogram: {analysis['is_bimodal']}")
         
-        # Save results
-        processor.save_results(results)
+        # Update config based on analysis
+        config.optimize_for_image_characteristics(analysis)
+        log_message("Configuration optimized based on image characteristics")
+    
+    # Optimize parameters if requested
+    if args.optimize_parameters:
+        expected_pieces = args.pieces if args.pieces else 24
         
-        # Show results if requested
-        if args.view:
-            cv2.imshow("Summary", results['visualizations']['summary'])
-            cv2.imshow("Metrics", results['visualizations']['metrics'])
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+        log_message("Optimizing parameters...")
+        optimization = processor.optimize_parameters_for_image(args.image, expected_pieces)
         
-        # Calculate and display statistics
-        num_pieces = len(results['pieces'])
-        elapsed_time = time.time() - start_time
+        log_message("Optimization complete:")
+        log_message(f"Best parameters found:")
+        for param, value in optimization['best_params'].items():
+            log_message(f"   {param}: {value}")
+        log_message(f"Best detection rate: {optimization['detection_rate'] * 100:.1f}%")
         
-        print_header("\nPuzzle Analysis Results:")
-        print_success(f"Detected {num_pieces} valid puzzle pieces")
-        
-        if args.pieces:
-            detection_rate = (num_pieces / args.pieces) * 100
-            print_info(f"Detection rate: {detection_rate:.1f}%")
-        
-        print_info(f"Processing time: {elapsed_time:.2f} seconds")
-        print_success("Analysis complete!")
-        
-    except Exception as e:
-        print_error(f"Error processing image: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        # Update config with best parameters
+        config.update(**optimization['best_params'])
+        log_message("Configuration updated with optimal parameters")
+    
+    # Process the image
+    results = processor.process_image(args.image, args.pieces, args.multi_pass)
+    
+    # Extract individual pieces if requested
+    if args.extract:
+        processor.extract_pieces(results['pieces'], args.extract_dir)
+    
+    # Display results
+    display_results(results, args.pieces)
+    
+    # Save results
+    processor.save_results(results)
+    
+    # View images if requested
+    if args.view:
+        view_images(results)
+    
+    # Report total processing time
+    total_time = time.time() - start_time
+    log_message(f"Total processing time: {total_time:.2f} seconds")
+    log_message(f"All results and logs saved. Log file: {log_file}")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logging.error(f"Error: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        sys.exit(1)

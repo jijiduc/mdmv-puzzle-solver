@@ -3,3 +3,4 @@ __pycache__/*
 extracted_pieces/*
 .mypy_cache/*
 results/*
+logs/*
