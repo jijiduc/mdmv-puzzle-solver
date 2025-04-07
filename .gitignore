@@ -1,2 +1,5 @@
 debug/*
 __pycache__/*
+extracted_pieces/*
+.mypy_cache/*
+results/*

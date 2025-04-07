@@ -1,6 +1,6 @@
 # mdmv-puzzle-solver
 
-Project of Model Driven Machine Vision (Course 206.2) course, lectured by Professor  Louis Lettry.
+Project of Model Driven Machine Vision (Course 206.2) course, lectured by Professor Louis Lettry.
 
 ## Project Context
 
@@ -52,7 +52,7 @@ Key definitions:
 
 2. **Keypoints Detection** (using OpenCV)\
    2.1. Compare form, color, and piece orientation\
-      2.1.1. Determine optimal n-value for the n-cutting of pieces\
+    2.1.1. Determine optimal n-value for the n-cutting of pieces\
 
 3. **Keypoints Description**\
    3.1. Develop color and form descriptors\
@@ -114,6 +114,53 @@ Key definitions:
 - Processing time
 - Robustness across different puzzle types and piece configurations
 - Ability to handle puzzles with varying numbers of pieces
+
+## Usage
+
+Here is how to use the program :
+
+### Install requirement
+
+```bash
+pip install -r requirements.txt
+```
+
+### Current usage
+
+```bash
+# Basic usage
+python main.py --image picture\puzzle_24-1\b-2.jpg 
+
+# Detailled usage
+python main.py --image picture\puzzle_24-1\b-2.jpg  --pieces 24 --use-multiprocessing --extract --view --auto-threshold
+
+# Filtrage par surface moyenne activé (par défaut)
+python main.py --image puzzle.jpg --pieces 24 --use-multiprocessing --extract --view
+
+# Désactiver le filtrage par moyenne
+python main.py --image puzzle.jpg --no-mean-filter
+
+# Ajuster le seuil (plus restrictif = 1.0)
+python main.py --image puzzle.jpg --mean-threshold 1.0
+
+# Ajuster le seuil (plus permissif = 3.0)
+python main.py --image puzzle.jpg --mean-threshold 3.0
+```
+
+```bash
+Command-line options:
+
+--image: Path to the puzzle image (required)
+--pieces: Expected number of pieces in the puzzle
+--debug-dir: Directory to save debug outputs (default: "debug")
+--extract: Extract individual pieces to separate files
+--extract-dir: Directory to save extracted pieces (default: "extracted_pieces")
+--use-multiprocessing: Use multiprocessing for faster detection
+--view: View results in image windows
+--auto-threshold: Applies both Otsu and adaptive thresholding to the preprocessed image
+--no-mean-filter : désactive le filtrage par moyenne
+--mean-threshold : ajuste le seuil d'écart-type
+```
 
 ## Team Members
 
