@@ -250,9 +250,9 @@ def create_processing_visualization(original_image: np.ndarray,
 
 
 def display_metrics(metrics: Dict[str, Any],
-                   figsize: Tuple[int, int] = (10, 6)) -> np.ndarray:
+                   figsize: Tuple[int, int] = (12, 8)) -> np.ndarray:
     """
-    Create a visual display of detection metrics
+    Create a visual display of detection metrics with verification information
     
     Args:
         metrics: Dictionary of metrics
@@ -262,48 +262,114 @@ def display_metrics(metrics: Dict[str, Any],
         Metrics visualization as numpy array
     """
     fig = plt.figure(figsize=figsize)
-    gs = GridSpec(2, 2, figure=fig)
+    gs = GridSpec(2, 3, figure=fig)
     
     # Metrics summary
     ax1 = fig.add_subplot(gs[0, 0])
     metrics_text = "\n".join([
         f"Detected Pieces: {metrics.get('detected_count', 'N/A')}",
         f"Expected Pieces: {metrics.get('expected_count', 'N/A')}",
+        f"Valid Pieces: {metrics.get('valid_pieces', 'N/A')}",
         f"Detection Rate: {metrics.get('detection_rate', 0):.2f}",
         f"Mean Area: {metrics.get('mean_area', 0):.1f}",
-        f"Edge Alignment: {metrics.get('edge_alignment', 0):.2f}",
-        f"Mean Compactness: {metrics.get('mean_compactness', 0):.2f}"
+        f"Edge Alignment: {metrics.get('edge_alignment', 0):.2f}"
     ])
     ax1.text(0.1, 0.5, metrics_text, fontsize=12, va='center')
     ax1.set_title("Detection Metrics")
     ax1.axis('off')
     
-    # Area distribution
-    if 'area_distribution' in metrics:
+    # Verification metrics if available
+    if 'pieces_removed_by_verification' in metrics:
         ax2 = fig.add_subplot(gs[0, 1])
-        areas = metrics['area_distribution']
-        ax2.hist(areas, bins=10, color='skyblue', edgecolor='black')
-        ax2.set_title("Piece Area Distribution")
-        ax2.set_xlabel("Area (pixels)")
-        ax2.set_ylabel("Count")
+        verification_text = "\n".join([
+            f"Original Detected: {metrics.get('original_detected_count', 'N/A')}",
+            f"After Verification: {metrics.get('detected_count', 'N/A')}",
+            f"Pieces Removed: {metrics.get('pieces_removed_by_verification', 0)}",
+            f"Rejected Mean Area: {metrics.get('rejected_mean_area', 0):.1f}",
+            f"Kept Mean Area: {metrics.get('mean_area', 0):.1f}",
+            f"Mean Validation Score: {metrics.get('mean_validation_score', 0):.2f}"
+        ])
+        ax2.text(0.1, 0.5, verification_text, fontsize=12, va='center')
+        ax2.set_title("Verification Results")
+        ax2.axis('off')
+    
+    # Area distribution
+    ax3 = fig.add_subplot(gs[0, 2])
+    if 'pieces' in metrics and metrics['pieces']:
+        areas = [p.features['area'] for p in metrics['pieces']]
+        ax3.hist(areas, bins=10, color='skyblue', edgecolor='black')
+        ax3.set_title("Piece Area Distribution")
+        ax3.set_xlabel("Area (pixels)")
+        ax3.set_ylabel("Count")
+    else:
+        ax3.text(0.5, 0.5, "No area data available", fontsize=12, ha='center', va='center')
+        ax3.set_title("Piece Area Distribution")
+        ax3.axis('off')
     
     # Border type distribution
-    if 'border_types' in metrics:
-        ax3 = fig.add_subplot(gs[1, 0])
+    ax4 = fig.add_subplot(gs[1, 0])
+    if 'border_types' in metrics and metrics['border_types']:
         border_counts = metrics['border_types']
-        ax3.bar(border_counts.keys(), border_counts.values(), color='lightgreen')
-        ax3.set_title("Border Type Distribution")
-        ax3.set_xlabel("Border Type")
-        ax3.set_ylabel("Count")
-    
-    # Solidity distribution
-    if 'solidity_distribution' in metrics:
-        ax4 = fig.add_subplot(gs[1, 1])
-        solidity = metrics['solidity_distribution']
-        ax4.hist(solidity, bins=10, color='salmon', edgecolor='black')
-        ax4.set_title("Piece Solidity Distribution")
-        ax4.set_xlabel("Solidity")
+        ax4.bar(border_counts.keys(), border_counts.values(), color='lightgreen')
+        ax4.set_title("Border Type Distribution")
+        ax4.set_xlabel("Border Type")
         ax4.set_ylabel("Count")
+    else:
+        ax4.text(0.5, 0.5, "No border type data available", fontsize=12, ha='center', va='center')
+        ax4.set_title("Border Type Distribution")
+        ax4.axis('off')
+    
+    # Validation score distribution
+    ax5 = fig.add_subplot(gs[1, 1])
+    if 'pieces' in metrics and metrics['pieces']:
+        validation_scores = [
+            p.validation_score for p in metrics['pieces'] 
+            if hasattr(p, 'validation_score')
+        ]
+        if validation_scores:
+            ax5.hist(validation_scores, bins=10, color='salmon', edgecolor='black')
+            ax5.set_title("Validation Score Distribution")
+            ax5.set_xlabel("Validation Score")
+            ax5.set_ylabel("Count")
+        else:
+            ax5.text(0.5, 0.5, "No validation score data available", fontsize=12, ha='center', va='center')
+            ax5.set_title("Validation Score Distribution")
+            ax5.axis('off')
+    else:
+        ax5.text(0.5, 0.5, "No validation score data available", fontsize=12, ha='center', va='center')
+        ax5.set_title("Validation Score Distribution")
+        ax5.axis('off')
+    
+    # Comparison of original vs verified counts
+    ax6 = fig.add_subplot(gs[1, 2])
+    if 'pieces_removed_by_verification' in metrics:
+        original = metrics.get('original_detected_count', 0)
+        after = metrics.get('detected_count', 0)
+        expected = metrics.get('expected_count', 0)
+        
+        bars = ax6.bar(['Original', 'Verified', 'Expected'], 
+                      [original, after, expected],
+                      color=['skyblue', 'lightgreen', 'salmon'])
+        ax6.bar_label(bars, fmt='%d')
+        ax6.set_title("Detection Counts")
+        ax6.set_ylabel("Piece Count")
+    else:
+        # If no verification was done, show compactness distribution instead
+        if 'pieces' in metrics and metrics['pieces']:
+            compactness = [p.features.get('compactness', 0) for p in metrics['pieces']]
+            if any(compactness):
+                ax6.hist(compactness, bins=10, color='lightblue', edgecolor='black')
+                ax6.set_title("Piece Compactness Distribution")
+                ax6.set_xlabel("Compactness")
+                ax6.set_ylabel("Count")
+            else:
+                ax6.text(0.5, 0.5, "No compactness data available", fontsize=12, ha='center', va='center')
+                ax6.set_title("Piece Compactness")
+                ax6.axis('off')
+        else:
+            ax6.text(0.5, 0.5, "No additional metrics available", fontsize=12, ha='center', va='center')
+            ax6.set_title("Additional Metrics")
+            ax6.axis('off')
     
     plt.tight_layout()
     

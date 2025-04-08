@@ -106,7 +106,13 @@ def parse_arguments():
     parser.add_argument("--multi-pass", action="store_true", help="Use multi-pass detection")
     parser.add_argument("--analyze-image", action="store_true", help="Analyze image characteristics")
     
+    # parameters for final verification
+    parser.add_argument("--area-verification", action="store_true", help="Apply final area verification")
+    parser.add_argument("--area-threshold", type=float, default=2.0, help="Standard deviation threshold for area verification")
+    parser.add_argument("--comprehensive-verification", action="store_true", help="Apply comprehensive final verification")
+    
     return parser.parse_args()
+
 
 
 def create_config(args):
@@ -247,6 +253,13 @@ def main():
     if args.multi_pass:
         log_message(f"Using multi-pass detection")
     
+    # Log verification settings
+    if args.area_verification:
+        log_message(f"Using final area verification (threshold: {args.area_threshold})")
+    
+    if args.comprehensive_verification:
+        log_message(f"Using comprehensive final verification")
+    
     # Create configuration
     config = create_config(args)
     
@@ -285,7 +298,19 @@ def main():
         log_message("Configuration updated with optimal parameters")
     
     # Process the image
-    results = processor.process_image(args.image, args.pieces, args.multi_pass)
+    # Add area verification parameters if enabled
+    process_kwargs = {
+        'use_multi_pass': args.multi_pass
+    }
+    
+    if args.area_verification:
+        process_kwargs['area_verification_threshold'] = args.area_threshold
+        process_kwargs['use_area_verification'] = True
+    
+    if args.comprehensive_verification:
+        process_kwargs['use_comprehensive_verification'] = True
+    
+    results = processor.process_image(args.image, args.pieces, **process_kwargs)
     
     # Extract individual pieces if requested
     if args.extract:

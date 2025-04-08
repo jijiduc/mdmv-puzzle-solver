@@ -1,10 +1,14 @@
 """
-Enhanced puzzle processing pipeline with adaptive parameter optimization
+Updated imports for processor.py to include the verification module
 """
 
 from src.utils.image_utils import read_image, save_image
 from src.utils.visualization import (
     create_processing_visualization, display_metrics, draw_contours
+)
+# Import the new verification module
+from src.utils.verification import (
+    final_area_verification, final_validation_check, create_verification_visualization
 )
 from src.core.piece import PuzzlePiece
 from src.core.detector import PuzzleDetector
@@ -21,7 +25,6 @@ import logging
 
 # Add parent directory to path to allow imports from utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 class PuzzleProcessor:
     """
@@ -58,17 +61,23 @@ class PuzzleProcessor:
         return logger
 
     def process_image(self, 
-                     image_path: str, 
-                     expected_pieces: Optional[int] = None,
-                     use_multi_pass: bool = True) -> Dict[str, Any]:
+                 image_path: str, 
+                 expected_pieces: Optional[int] = None,
+                 use_multi_pass: bool = True,
+                 use_area_verification: bool = False,
+                 area_verification_threshold: float = 2.0,
+                 use_comprehensive_verification: bool = False) -> Dict[str, Any]:
         """
         Process an image to detect and analyze puzzle pieces
-        with enhanced adaptive optimization
+        with enhanced adaptive optimization and final verification
         
         Args:
             image_path: Path to the image file
             expected_pieces: Expected number of pieces (for metrics and optimization)
             use_multi_pass: Whether to use multi-pass detection for improved results
+            use_area_verification: Whether to use final area verification
+            area_verification_threshold: Threshold for final area verification
+            use_comprehensive_verification: Whether to use comprehensive verification
         
         Returns:
             Dictionary with processing results
@@ -92,6 +101,39 @@ class PuzzleProcessor:
             # Use single-pass detection (still with adaptive parameters)
             pieces, debug_images = self.detector.detect(image, expected_pieces)
         
+        # Keep track of original pieces before verification
+        original_pieces = pieces.copy()
+        original_piece_count = len(pieces)
+        
+        # Apply verification if requested
+        rejected_pieces = []
+        if use_comprehensive_verification:
+            self.logger.info("Applying comprehensive final verification...")
+            verified_pieces = final_validation_check(
+                pieces, 
+                expected_pieces=expected_pieces,
+                area_threshold=area_verification_threshold
+            )
+            rejected_pieces = [p for p in original_pieces if p not in verified_pieces]
+            pieces = verified_pieces
+        elif use_area_verification:
+            self.logger.info(f"Applying final area verification with threshold {area_verification_threshold}...")
+            verified_pieces = final_area_verification(pieces, area_verification_threshold)
+            rejected_pieces = [p for p in original_pieces if p not in verified_pieces]
+            pieces = verified_pieces
+        
+        # Create verification visualization if pieces were rejected
+        if rejected_pieces:
+            self.logger.info(f"Verification removed {len(rejected_pieces)} pieces")
+            verification_vis = create_verification_visualization(
+                image, pieces, rejected_pieces
+            )
+            debug_images['verification'] = verification_vis
+            save_image(
+                verification_vis, 
+                os.path.join(self.config.DEBUG_DIR, "verification_visualization.jpg")
+            )
+        
         # Calculate processing time
         processing_time = time.time() - start_time
         self.logger.info(f"Detection completed in {processing_time:.2f} seconds")
@@ -99,6 +141,18 @@ class PuzzleProcessor:
         # Calculate metrics
         metrics = self.calculate_metrics(pieces, image, expected_pieces)
         metrics['processing_time'] = processing_time
+        
+        # Add verification metrics
+        if use_area_verification or use_comprehensive_verification:
+            metrics['original_detected_count'] = original_piece_count
+            metrics['pieces_removed_by_verification'] = original_piece_count - len(pieces)
+            
+            if rejected_pieces:
+                # Calculate statistics about rejected pieces
+                rejected_areas = [p.features['area'] for p in rejected_pieces]
+                metrics['rejected_mean_area'] = np.mean(rejected_areas) if rejected_areas else 0
+                metrics['rejected_min_area'] = np.min(rejected_areas) if rejected_areas else 0
+                metrics['rejected_max_area'] = np.max(rejected_areas) if rejected_areas else 0
         
         # Save metrics report
         metrics_path = os.path.join(self.config.DEBUG_DIR, "metrics_report.json")
@@ -151,7 +205,7 @@ class PuzzleProcessor:
         # If we have combined visualization from multi-pass, include it
         if 'combined_visualization' in debug_images:
             save_image(debug_images['combined_visualization'], 
-                     os.path.join(self.config.DEBUG_DIR, "combined_detection.jpg"))
+                    os.path.join(self.config.DEBUG_DIR, "combined_detection.jpg"))
         
         # Return results
         return {
@@ -161,7 +215,8 @@ class PuzzleProcessor:
             'visualizations': {
                 'summary': summary_vis,
                 'metrics': metrics_vis,
-                'pieces': piece_visualizations
+                'pieces': piece_visualizations,
+                'verification': debug_images.get('verification', None)
             },
             'processing_time': processing_time
         }
