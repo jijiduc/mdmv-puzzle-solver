@@ -52,17 +52,9 @@ class PuzzleDetector:
         }
     
     def _setup_logger(self) -> logging.Logger:
-        """Set up a logger for the detector"""
+        """Set up a logger for the detector/processor"""
         logger = logging.getLogger(__name__)
-        logger.setLevel(logging.DEBUG if self.config.DEBUG else logging.INFO)
-        
-        # Add console handler if no handlers exist
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        
+        # Don't add handlers - use the root logger configuration
         return logger
     
     def save_debug_image(self, image: np.ndarray, filename: str) -> None:

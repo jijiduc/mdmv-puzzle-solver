@@ -5,7 +5,9 @@ This script processes images of puzzle pieces on a dark background and
 detects individual pieces using enhanced computer vision techniques.
 All terminal output is also saved to a log file.
 """
-
+import cProfile
+import pstats
+from io import StringIO
 import cv2
 import numpy as np
 import os
@@ -40,21 +42,28 @@ def setup_logging(log_dir="logs"):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     log_file = os.path.join(log_dir, f"puzzle_detection_{timestamp}.log")
     
-    # Configure root logger to write to both console and file
-    # Use UTF-8 encoding for the file handler
-    handlers = [
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(log_file, encoding='utf-8')
-    ]
+    # Configure file handler with detailed logging
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(levelname)s - %(message)s',
-        handlers=handlers
-    )
+    # Configure console handler with minimal output
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.WARNING)  # Only show warnings and errors in console
+    console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
     
-    logger = logging.getLogger(__name__)
-    logger.info(f"Logging to file: {log_file}")
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # Create a separate progress logger for minimal console output
+    progress_logger = logging.getLogger('progress')
+    progress_logger.setLevel(logging.INFO)
+    progress_logger.addHandler(console_handler)
+    
+    progress_logger.info(f"Processing started. Detailed logs at: {log_file}")
     
     return log_file
 
@@ -110,7 +119,9 @@ def parse_arguments():
     parser.add_argument("--area-verification", action="store_true", help="Apply final area verification")
     parser.add_argument("--area-threshold", type=float, default=2.0, help="Standard deviation threshold for area verification")
     parser.add_argument("--comprehensive-verification", action="store_true", help="Apply comprehensive final verification")
-    
+    # Add performance profiling option
+    parser.add_argument("--profile", action="store_true", help="Enable performance profiling")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with image saving")
     return parser.parse_args()
 
 
@@ -142,14 +153,18 @@ def create_config(args):
     return config
 
 
-def log_message(message):
+def log_message(message, console=False):
     """
-    Log a message to both console and file
+    Log a message to both console and file or just file
     
     Args:
         message: Message to log
+        console: Whether to show in console
     """
-    logging.info(message)
+    if console:
+        logging.getLogger('progress').info(message)
+    else:
+        logging.info(message)
 
 
 def display_results(results, expected_pieces: Optional[int] = None):
@@ -163,35 +178,23 @@ def display_results(results, expected_pieces: Optional[int] = None):
     pieces = results['pieces']
     metrics = results['metrics']
     
-    log_message("\n=== Puzzle Analysis Results ===")
-    log_message(f"Detected {len(pieces)} valid puzzle pieces")
+    # Log detailed information to file only
+    logging.info("\n=== Puzzle Analysis Results ===")
+    logging.info(f"Detected {len(pieces)} valid puzzle pieces")
     
     if expected_pieces:
         detection_rate = len(pieces) / expected_pieces * 100
-        log_message(f"Detection rate: {detection_rate:.1f}%")
+        logging.info(f"Detection rate: {detection_rate:.1f}%")
     
-    log_message(f"Processing time: {results['processing_time']:.2f} seconds")
+    logging.info(f"Processing time: {results['processing_time']:.2f} seconds")
     
-    # Print some statistics about the detected pieces
-    if pieces:
-        valid_pieces = sum(1 for p in pieces if p.is_valid)
-        log_message(f"Valid pieces: {valid_pieces}/{len(pieces)}")
-        
-        if hasattr(pieces[0], 'validation_score'):
-            scores = [p.validation_score for p in pieces if hasattr(p, 'validation_score')]
-            if scores:
-                avg_score = sum(scores) / len(scores)
-                log_message(f"Average validation score: {avg_score:.2f}")
-        
-        # Print border type distribution
-        if 'border_types' in metrics and metrics['border_types']:
-            border_types = metrics['border_types']
-            log_message(f"Border types: " + 
-                      f"straight={border_types.get('straight', 0)}, " +
-                      f"tab={border_types.get('tab', 0)}, " +
-                      f"pocket={border_types.get('pocket', 0)}")
-    
-    log_message("=== Analysis complete! ===")
+    # Print summary to console
+    progress_logger = logging.getLogger('progress')
+    progress_logger.info(f"Detected {len(pieces)} puzzle pieces")
+    if expected_pieces:
+        detection_rate = len(pieces) / expected_pieces * 100
+        progress_logger.info(f"Detection rate: {detection_rate:.1f}%")
+    progress_logger.info(f"Processing time: {results['processing_time']:.2f} seconds")
 
 
 def view_images(results):
@@ -224,6 +227,11 @@ def main():
     # Set up logging to both console and file
     log_file = setup_logging(args.log_dir)
     
+    # Add performance profiling option
+    if args.profile:
+        profiler = cProfile.Profile()
+        profiler.enable()
+        
     # Clear debug and extracted_pieces directories
     log_message("Cleaning output directories...")
     clear_directory(args.debug_dir)
@@ -262,7 +270,13 @@ def main():
     
     # Create configuration
     config = create_config(args)
-    
+    # Skip debug image saving when not in debug mode
+    if not args.debug:
+        config.DEBUG = False
+        # Create a no-op function to replace save_debug_image
+        def dummy_save(*args, **kwargs):
+            pass
+        processor.detector.save_debug_image = dummy_save
     # Create processor
     processor = PuzzleProcessor(config)
     
@@ -325,12 +339,17 @@ def main():
     # View images if requested
     if args.view:
         view_images(results)
+    # End profiling if enabled
+    if args.profile:
+        profiler.disable()
+        s = StringIO()
+        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+        ps.print_stats(20)  # Print top 20 time consumers
+        logging.info("Performance Profile:\n" + s.getvalue())
     
     # Report total processing time
     total_time = time.time() - start_time
-    log_message(f"Total processing time: {total_time:.2f} seconds")
-    log_message(f"All results and logs saved. Log file: {log_file}")
-
+    log_message(f"Total processing time: {total_time:.2f} seconds", console=True)
 
 if __name__ == "__main__":
     try:

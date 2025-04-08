@@ -114,6 +114,8 @@ python main.py --image picture\puzzle_24-1\b-2.jpg
 # Enhanced usage with all optimizations
 python main.py --image picture\puzzle_24-1\b-2.jpg --pieces 24 --adaptive-preprocessing --optimize-parameters --multi-pass --extract
 
+python main.py --image picture\puzzle_24-1\b-2.jpg  --pieces 24 --comprehensive-verification --adaptive-preprocessing --optimize-parameters --area-verification --area-threshold 2.5
+
 # Analysis of image characteristics 
 python main.py --image picture\puzzle_24-1\b-2.jpg --analyze-image
 

@@ -16,11 +16,13 @@ def final_area_verification(pieces, area_threshold: float = 2.0, expected_pieces
     Args:
         pieces: List of PuzzlePiece objects
         area_threshold: Standard deviation threshold for filtering (default: 2.0)
-        expected_pieces: Expected number of pieces (optional, for recovery)
+        expected_pieces: Expected number of pieces (for recovery)
     
     Returns:
         List of verified pieces
     """
+    # Rest of function remains the same...
+        
     if not pieces or len(pieces) < 2:
         return pieces
     

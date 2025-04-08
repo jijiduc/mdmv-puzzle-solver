@@ -7,7 +7,7 @@ class Config:
     """Global configuration parameters with adaptive capabilities"""
     
     # Debug settings
-    DEBUG = True
+    DEBUG = False
     DEBUG_DIR = "debug"
     
     # Pipeline selection
@@ -80,7 +80,7 @@ class Config:
     
     # Performance
     USE_MULTIPROCESSING = True
-    NUM_PROCESSES = 4  # Set to number of CPU cores for optimal performance
+    NUM_PROCESSES = 8  # Set to number of CPU cores for optimal performance
     
     @classmethod
     def from_dict(cls, param_dict):
