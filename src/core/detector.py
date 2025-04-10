@@ -1,7 +1,21 @@
 """
-Enhanced puzzle piece detection algorithms with adaptive parameter optimization
+Détecteur optimisé de pièces de puzzle avec focus sur la segmentation
+et la performance.
 """
 
+from src.core.piece import PuzzlePiece
+from src.config.settings import Config
+from src.utils.contour_utils import (
+    find_contours, filter_contours, calculate_contour_features,
+    validate_shape_as_puzzle_piece, cluster_contours, optimize_contours
+)
+from src.utils.image_utils import (
+    preprocess_image, adaptive_threshold, apply_morphology, detect_edges,
+    multi_channel_preprocess, analyze_image, adaptive_preprocess,
+    find_optimal_threshold_parameters, compare_threshold_methods,
+    optimize_for_segmentation, fast_adaptive_threshold, clean_binary_image,
+    detect_puzzle_pieces
+)
 import cv2
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
@@ -11,707 +25,614 @@ import time
 import logging
 from multiprocessing import Pool, cpu_count
 import math
-from itertools import product
+from src.utils.cache_utils import PipelineCache
 
-# Add parent directory to path to allow imports from utils
+# Ajout du répertoire parent au chemin pour permettre les imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.utils.image_utils import (
-    preprocess_image, adaptive_threshold, apply_morphology, detect_edges,
-    multi_channel_preprocess, analyze_image, adaptive_preprocess,
-    find_optimal_threshold_parameters, compare_threshold_methods,
-    fuse_binary_images, multi_scale_edge_detection
-)
-from src.utils.contour_utils import (
-    find_contours, filter_contours, calculate_contour_features, 
-    enhanced_find_corners, extract_borders, classify_border,
-    cluster_contours, validate_shape_as_puzzle_piece
-)
-from src.config.settings import Config
-from src.core.piece import PuzzlePiece
 
 
 class PuzzleDetector:
     """
-    Enhanced detector for puzzle pieces in images with adaptive parameter optimization
+    Détecteur optimisé pour la segmentation des pièces de puzzle.
+    Se concentre uniquement sur la détection des pièces sans analyser leurs caractéristiques internes.
     """
-    
-    def __init__(self, config: Config = None):
+
+    def __init__(self, config: Config = None, pipeline_cache: Optional[PipelineCache] = None):
         """
-        Initialize the detector
-        
+        Initialise le détecteur avec la configuration fournie.
+
         Args:
-            config: Configuration parameters
+            config: Paramètres de configuration
+            pipeline_cache: Cache du pipeline (optionnel)
         """
         self.config = config or Config()
         self.logger = self._setup_logger()
-        
-        # Track detection performance for parameter optimization
+        self.debug_images = {}
+        self.pipeline_cache = pipeline_cache
+
+        # Suivi des performances de détection
         self.detection_stats = {
             'params': {},
-            'results': {}
+            'results': {},
+            'timing': {}
         }
-    
+
     def _setup_logger(self) -> logging.Logger:
-        """Set up a logger for the detector/processor"""
+        """Configure un logger pour le détecteur"""
         logger = logging.getLogger(__name__)
-        # Don't add handlers - use the root logger configuration
         return logger
-    
+
     def save_debug_image(self, image: np.ndarray, filename: str) -> None:
         """
-        Save an image for debugging purposes
-        
+        Sauvegarde une image pour le débogage et la conserve en mémoire.
+
         Args:
-            image: Image to save
-            filename: Filename (will be saved to debug directory)
+            image: Image à sauvegarder
+            filename: Nom du fichier
         """
         if not self.config.DEBUG:
             return
-            
+
+        # Garder une copie en mémoire pour analyse
+        self.debug_images[filename.split('.')[0]] = image.copy()
+
+        # Sauvegarder sur disque si nécessaire
         os.makedirs(self.config.DEBUG_DIR, exist_ok=True)
         path = os.path.join(self.config.DEBUG_DIR, filename)
         cv2.imwrite(path, image)
-        self.logger.debug(f"Saved debug image to {path}")
-    
-    def preprocess_with_sobel(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self.logger.debug(f"Image de débogage sauvegardée: {path}")
+
+    def preprocess_fast(self, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Preprocess an image using the Sobel pipeline
+        Prétraitement rapide d'une image pour la détection des pièces.
+        Version optimisée.
         
         Args:
-            image: Input color image
+            image: Image couleur d'entrée
         
         Returns:
-            Tuple of (preprocessed image, binary image, edge image)
+            Tuple de (image prétraitée, image binaire, image des bords)
         """
-        self.logger.info("Preprocessing image with Sobel pipeline...")
+        start_time = time.time()
+        self.logger.info("Prétraitement rapide de l'image...")
         
-        # No resizing - use original image dimensions
-        h, w = image.shape[:2]
-        self.logger.info(f"Processing original image dimensions: {w}x{h}")
-        
-        # 1. Conversion to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # Conversion en niveaux de gris avec masque de bits au lieu de np.copy
+        # C'est plus rapide que cv2.cvtColor pour les conversions simples
+        gray = image[:,:,1] if len(image.shape) == 3 else image.copy()
         self.save_debug_image(gray, "01_gray.jpg")
         
-        # 2. Apply Gaussian blur
-        blurred = cv2.GaussianBlur(gray, self.config.BLUR_KERNEL_SIZE, 0)
+        # Flou gaussien pour réduire le bruit
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         self.save_debug_image(blurred, "02_blurred.jpg")
         
-        # 3. Apply Sobel filter for edge detection
-        sobelx = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=self.config.SOBEL_KSIZE)
-        sobely = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=self.config.SOBEL_KSIZE)
-        sobel_combined = cv2.magnitude(sobelx, sobely)
-        sobel_8u = cv2.normalize(sobel_combined, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        self.save_debug_image(sobel_8u, "03_sobel.jpg")
+        # Analyse rapide pour déterminer le type d'image
+        analysis = analyze_image(image)
         
-        # 4. Enhance contrast
-        clahe = cv2.createCLAHE(clipLimit=self.config.CLAHE_CLIP_LIMIT, 
-                                tileGridSize=self.config.CLAHE_GRID_SIZE)
-        contrasted = clahe.apply(sobel_8u)
-        self.save_debug_image(contrasted, "04_contrasted.jpg")
+        # Choisir la méthode de seuillage en fonction des caractéristiques de l'image
+        if analysis['is_dark_background']:
+            # Pour fond sombre - méthode directe rapide
+            threshold_value = min(100, analysis['background_value'] + 30)
+            _, binary = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY)
+        else:
+            # Pour d'autres types d'images, utiliser Otsu
+            _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         
-        # 5. Apply dilation to thicken edges
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, 
-                                        (self.config.MORPH_KERNEL_SIZE_SOBEL, 
-                                        self.config.MORPH_KERNEL_SIZE_SOBEL))
-        dilated = cv2.dilate(contrasted, kernel, iterations=self.config.DILATE_ITERATIONS)
-        self.save_debug_image(dilated, "05_dilated.jpg")
+        self.save_debug_image(binary, "03_binary.jpg")
         
-        # 6. Apply erosion to refine edges
-        eroded = cv2.erode(dilated, kernel, iterations=self.config.ERODE_ITERATIONS)
-        self.save_debug_image(eroded, "06_eroded.jpg")
+        # Optimisation: utiliser des versions précompilées des noyaux morphologiques
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        self.save_debug_image(cleaned, "04_cleaned.jpg")
         
-        # 7. Apply Otsu's thresholding as the final step
-        _, binary = cv2.threshold(eroded, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        self.save_debug_image(binary, "07_threshold.jpg")
+        # Détection des bords - optionnelle, pour compatibilité
+        # Utiliser une seule passe de Canny au lieu de plusieurs seuils
+        edges = cv2.Canny(cleaned, 50, 150)
+        self.save_debug_image(edges, "05_edges.jpg")
         
-        # Edge detection with Canny (optional, for compatibility with existing code)
-        edges = cv2.Canny(binary, self.config.CANNY_LOW_THRESHOLD, self.config.CANNY_HIGH_THRESHOLD)
-        self.save_debug_image(edges, "08_edges.jpg")
+        self.detection_stats['timing']['preprocessing'] = time.time() - start_time
         
-        return gray, binary, edges
-    
+        return blurred, cleaned, edges
+
     def preprocess_adaptive(self, image: np.ndarray, expected_pieces: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Advanced adaptive preprocessing with image analysis and multi-channel processing
-        
+        Prétraitement adaptatif avancé avec analyse multi-canal.
+
         Args:
-            image: Input color image
-            expected_pieces: Expected number of pieces (for optimization)
-        
+            image: Image couleur d'entrée
+            expected_pieces: Nombre attendu de pièces (pour optimisation)
+
         Returns:
-            Tuple of (preprocessed image, binary image, edge image)
+            Tuple de (image prétraitée, image binaire, image des bords)
         """
-        self.logger.info("Using advanced adaptive preprocessing...")
-        
-        # Use original image dimensions
-        h, w = image.shape[:2]
-        self.logger.info(f"Processing original image dimensions: {w}x{h}")
-        
-        # Analyze image properties
+        start_time = time.time()
+        self.logger.info("Utilisation du prétraitement adaptatif avancé...")
+
+        # Analyse de l'image
         analysis = analyze_image(image)
-        self.logger.info(f"Image analysis: contrast={analysis['contrast']:.2f}, background={analysis['background_value']:.2f}")
-        
-        # Use multi-channel preprocessing to create the best grayscale representation
+        self.logger.info(
+            f"Analyse d'image: contraste={analysis['contrast']:.2f}, fond={analysis['background_value']:.2f}")
+
+        # Utilisation du prétraitement multi-canal pour créer la meilleure représentation en niveaux de gris
         best_preprocessed, all_channels = multi_channel_preprocess(image)
         self.save_debug_image(best_preprocessed, "01_best_preprocessed.jpg")
-        
-        # Save diagnostic images of different channels
+
+        # Sauvegarder des images de diagnostic des différents canaux
         for name, channel in all_channels.items():
-            if len(channel.shape) == 2:  # Only grayscale channels
+            if len(channel.shape) == 2:  # Uniquement les canaux en niveaux de gris
                 self.save_debug_image(channel, f"01_channel_{name}.jpg")
-        
-        # Find optimal threshold parameters
+
+        # Trouver les paramètres de seuillage optimaux
         threshold_params = find_optimal_threshold_parameters(best_preprocessed)
-        self.logger.info(f"Selected threshold method: {threshold_params['method']}")
-        
-        # Apply the optimal thresholding
+        self.logger.info(
+            f"Méthode de seuillage sélectionnée: {threshold_params['method']}")
+
+        # Appliquer le seuillage optimal
         if threshold_params['method'] == 'otsu':
-            _, binary = cv2.threshold(best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            _, binary = cv2.threshold(
+                best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         elif threshold_params['method'] == 'adaptive':
             binary = cv2.adaptiveThreshold(
-                best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY, threshold_params['block_size'], threshold_params['c']
             )
         elif threshold_params['method'] == 'hybrid':
-            # Hybrid approach
-            _, otsu_binary = cv2.threshold(best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            # Approche hybride
+            _, otsu_binary = cv2.threshold(
+                best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             adaptive_binary = cv2.adaptiveThreshold(
-                best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY, 35, 10
             )
             binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
-        
+
         self.save_debug_image(binary, "02_binary.jpg")
-        
-        # Apply morphological operations to clean up binary image
-        # Use adaptive kernel size based on image size
-        kernel_size = max(3, min(7, int(min(h, w) / 500)))
-        morph = apply_morphology(
-            binary, 
-            operation=cv2.MORPH_CLOSE, 
+
+        # Opérations morphologiques pour nettoyer l'image binaire
+        kernel_size = max(
+            3, min(7, int(min(image.shape[0], image.shape[1]) / 500)))
+        cleaned = apply_morphology(
+            binary,
+            operation=cv2.MORPH_CLOSE,
             kernel_size=kernel_size,
             iterations=2
         )
-        self.save_debug_image(morph, "03_morphology.jpg")
-        
-        # Enhanced edge detection
-        edges = multi_scale_edge_detection(best_preprocessed)
-        self.save_debug_image(edges, "04_edges.jpg")
-        
-        return best_preprocessed, morph, edges
-    
-    def preprocess(self, image: np.ndarray, expected_pieces: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Preprocess an image for puzzle piece detection
-        Uses either original pipeline, Sobel pipeline, or new adaptive preprocessing
-        
-        Args:
-            image: Input color image
-            expected_pieces: Optional expected number of pieces for optimization
-        
-        Returns:
-            Tuple of (preprocessed image, binary image, edge image)
-        """
-        # Choose which pipeline to use based on configuration or auto-detection
-        if hasattr(self.config, 'USE_ADAPTIVE_PREPROCESSING') and self.config.USE_ADAPTIVE_PREPROCESSING:
-            return self.preprocess_adaptive(image, expected_pieces)
-        elif self.config.USE_SOBEL_PIPELINE:
-            return self.preprocess_with_sobel(image)
-            
-        # Original preprocessing pipeline follows
-        self.logger.info("Preprocessing image with standard pipeline...")
-        
-        # No resizing - use original image dimensions
-        h, w = image.shape[:2]
-        self.logger.info(f"Processing original image dimensions: {w}x{h}")
-        
-        # Use simplified preprocessing approach
-        preprocessed = preprocess_image(image)
-        self.save_debug_image(preprocessed, "01_preprocessed.jpg")
-        
-        # Determine the best thresholding method if auto-threshold is enabled
-        if self.config.USE_AUTO_THRESHOLD:
-            self.logger.info("Using auto threshold selection...")
-            
-            # Use the enhanced comparison method
-            binary, method, metrics = compare_threshold_methods(
-                preprocessed,
-                self.config.ADAPTIVE_BLOCK_SIZE,
-                self.config.ADAPTIVE_C
-            )
-            
-            self.logger.info(f"Selected {method} thresholding method")
-            self.save_debug_image(binary, f"02_{method}_binary.jpg")
-        else:
-            # Default to Otsu if auto-threshold is not enabled
-            _, binary = cv2.threshold(preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            self.save_debug_image(binary, "02_binary.jpg")
-        
-        # Morphological operations to clean up the binary image
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        morph = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        self.save_debug_image(morph, "03_morphology.jpg")
-        
-        # Edge detection with Canny
-        edges = cv2.Canny(morph, 30, 200)
-        self.save_debug_image(edges, "04_edges.jpg")
-        
-        return preprocessed, morph, edges
-    
-    def try_parameter_combinations(self, binary_image: np.ndarray, original_image: np.ndarray, 
-                                 expected_pieces: Optional[int] = None) -> Tuple[List[np.ndarray], Dict[str, Any]]:
-        """
-        Try multiple parameter combinations for contour detection and select the best
-        
-        Args:
-            binary_image: Binary input image
-            original_image: Original image
-            expected_pieces: Expected number of pieces
-        
-        Returns:
-            Tuple of (list of best contours, parameter statistics)
-        """
-        self.logger.info("Optimizing contour detection parameters...")
-        
-        # Define parameter grid
-        param_grid = {
-            'min_area': [500, 1000, 2000, 3000],
-            'solidity_min': [0.5, 0.6, 0.7],
-            'aspect_ratio_range': [(0.2, 5.0), (0.25, 4.0), (0.3, 3.0)]
-        }
-        
-        # Generate all parameter combinations
-        param_combinations = []
-        for min_area in param_grid['min_area']:
-            for solidity_min in param_grid['solidity_min']:
-                for aspect_ratio_range in param_grid['aspect_ratio_range']:
-                    params = {
-                        'min_area': min_area,
-                        'solidity_range': (solidity_min, 0.99),
-                        'aspect_ratio_range': aspect_ratio_range
-                    }
-                    param_combinations.append(params)
-        
-        # Calculate max contour area based on image size
-        img_area = original_image.shape[0] * original_image.shape[1]
-        max_area = self.config.MAX_CONTOUR_AREA_RATIO * img_area
-        
-        # Find contours once
-        initial_contours, _ = cv2.findContours(binary_image.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        self.logger.info(f"Found {len(initial_contours)} initial contours")
-        
-        # If we have too few initial contours, try alternative methods
-        if len(initial_contours) < (expected_pieces or 10):
-            # Try different contour finding modes
-            alt_contours, _ = cv2.findContours(binary_image.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-            initial_contours.extend([c for c in alt_contours if cv2.contourArea(c) > 100])
-            self.logger.info(f"Added alternative contours, now have {len(initial_contours)}")
-        
-        results = []
-        
-        # Try each parameter combination
-        for params in param_combinations:
-            # Add max_area to params
-            params['max_area'] = max_area
-            params['min_perimeter'] = self.config.MIN_CONTOUR_PERIMETER
-            
-            # Filter contours with current parameters
-            filtered = filter_contours(
-                initial_contours,
-                **params
-            )
-            
-            # Apply statistical filtering if enabled
-            if self.config.USE_MEAN_FILTERING and len(filtered) > 1:
-                areas = np.array([cv2.contourArea(cnt) for cnt in filtered])
-                mean_area = np.mean(areas)
-                std_area = np.std(areas)
-                
-                min_acceptable = mean_area - self.config.MEAN_DEVIATION_THRESHOLD * std_area
-                max_acceptable = mean_area + self.config.MEAN_DEVIATION_THRESHOLD * std_area
-                
-                mean_filtered = [cnt for cnt in filtered if min_acceptable <= cv2.contourArea(cnt) <= max_acceptable]
-                final_contours = mean_filtered
-            else:
-                final_contours = filtered
-            
-            # Calculate score based on contour quality and expected count
-            score = self._evaluate_contour_set(final_contours, expected_pieces)
-            
-            results.append({
-                'params': params,
-                'contours': final_contours,
-                'count': len(final_contours),
-                'mean_area': np.mean([cv2.contourArea(c) for c in final_contours]) if final_contours else 0,
-                'score': score
-            })
-        
-        # Sort by score (descending)
-        results.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Log results
-        self.logger.info(f"Parameter optimization results:")
-        for i, result in enumerate(results[:3]):  # Log top 3
-            self.logger.info(f"  #{i+1}: score={result['score']:.2f}, count={result['count']}, " +
-                           f"min_area={result['params']['min_area']}, " +
-                           f"solidity={result['params']['solidity_range'][0]}")
-        
-        # Record detection statistics
-        detection_stats = {
-            'total_combinations': len(param_combinations),
-            'best_params': results[0]['params'] if results else None,
-            'best_score': results[0]['score'] if results else 0,
-            'best_count': results[0]['count'] if results else 0,
-        }
-        
-        # Return the best contours and stats
-        return results[0]['contours'] if results else [], detection_stats
-    
-    def _evaluate_contour_set(self, contours: List[np.ndarray], expected_pieces: Optional[int] = None) -> float:
-        """
-        Evaluate the quality of a set of contours
-        
-        Args:
-            contours: List of contours
-            expected_pieces: Expected number of pieces
-        
-        Returns:
-            Quality score (higher is better)
-        """
-        if not contours:
-            return 0.0
-        
-        # Calculate metrics
-        areas = [cv2.contourArea(c) for c in contours]
-        perimeters = [cv2.arcLength(c, True) for c in contours]
-        
-        mean_area = np.mean(areas)
-        std_area = np.std(areas)
-        cv_area = std_area / mean_area if mean_area > 0 else float('inf')
-        
-        # Calculate shape complexity (higher for puzzle pieces)
-        complexity = [p**2 / (4 * np.pi * a) if a > 0 else 0 for p, a in zip(perimeters, areas)]
-        mean_complexity = np.mean(complexity)
-        
-        # Calculate score components
-        
-        # 1. Count score - how close we are to expected count
-        if expected_pieces:
-            count_ratio = len(contours) / expected_pieces
-            # Penalize both too few and too many contours
-            count_score = 1.0 - min(abs(1.0 - count_ratio), 1.0)
-        else:
-            # Without expected count, moderate numbers are better
-            # (too few probably misses pieces, too many probably has noise)
-            count_score = min(len(contours) / 30.0, 1.0)
-        
-        # 2. Area consistency - puzzle pieces should be similar in size
-        consistency_score = 1.0 - min(cv_area, 1.0)
-        
-        # 3. Shape complexity - puzzle pieces should have tabs and indentations
-        # Typical range for puzzle pieces is 3-7
-        complexity_score = 0.0
-        if 2.5 <= mean_complexity <= 8.0:
-            # Peak score at around 5.0 complexity
-            complexity_score = 1.0 - abs(mean_complexity - 5.0) / 5.0
-        
-        # 4. Validation score - check what percentage look like puzzle pieces
-        valid_pieces = sum(1 for c in contours if validate_shape_as_puzzle_piece(c))
-        validation_score = valid_pieces / len(contours) if contours else 0.0
-        
-        # Weight the components
-        if expected_pieces:
-            # When we have expected count, prioritize getting close to that number
-            final_score = (
-                0.4 * count_score +
-                0.3 * consistency_score +
-                0.2 * complexity_score +
-                0.1 * validation_score
-            )
-        else:
-            # Without expected count, prioritize consistency and shape
-            final_score = (
-                0.2 * count_score +
-                0.4 * consistency_score +
-                0.3 * complexity_score +
-                0.1 * validation_score
-            )
-        
-        return final_score
-    
-    def detect_contours(self, binary_image: np.ndarray, original_image: np.ndarray,
-                        expected_pieces: Optional[int] = None) -> List[np.ndarray]:
-        """
-        Enhanced contour detection with parameter optimization
-        
-        Args:
-            binary_image: Binary input image
-            original_image: Original image (for size-based filtering)
-            expected_pieces: Expected number of pieces
-        
-        Returns:
-            List of detected contours
-        """
-        self.logger.info("Detecting contours with enhanced approach...")
-        
-        # Try multiple parameter combinations if time permits
-        if hasattr(self.config, 'USE_PARAMETER_OPTIMIZATION') and self.config.USE_PARAMETER_OPTIMIZATION:
-            contours, stats = self.try_parameter_combinations(binary_image, original_image, expected_pieces)
-            self.detection_stats['params'] = stats
-            
-            if len(contours) > 0:
-                self.logger.info(f"Parameter optimization found {len(contours)} contours")
-                # Create contour visualization
-                contour_vis = original_image.copy()
-                for i, contour in enumerate(contours):
-                    # Generate random color for each contour
-                    color = (
-                        np.random.randint(0, 255),
-                        np.random.randint(0, 255),
-                        np.random.randint(0, 255)
-                    )
-                    cv2.drawContours(contour_vis, [contour], -1, color, 2)
-                    
-                    # Add contour index
-                    M = cv2.moments(contour)
-                    if M["m00"] != 0:
-                        cx = int(M["m10"] / M["m00"])
-                        cy = int(M["m01"] / M["m00"])
-                        cv2.putText(contour_vis, str(i), (cx, cy),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                
-                self.save_debug_image(contour_vis, "05_contours_optimized.jpg")
-                return contours
-        
-        # If optimization is disabled or failed, use standard approach
-        # Calculate max contour area based on image size
-        img_area = original_image.shape[0] * original_image.shape[1]
-        max_area = self.config.MAX_CONTOUR_AREA_RATIO * img_area
-        
-        # Find contours using comprehensive methods
-        contours = find_contours(binary_image)
-        self.logger.info(f"Found {len(contours)} initial contours")
-        
-        # Filter contours with more lenient parameters
-        filtered_contours = filter_contours(
-            contours,
-            min_area=self.config.MIN_CONTOUR_AREA,
-            max_area=max_area,
-            min_perimeter=self.config.MIN_CONTOUR_PERIMETER,
-            solidity_range=self.config.SOLIDITY_RANGE,
-            aspect_ratio_range=self.config.ASPECT_RATIO_RANGE,
-            use_statistical_filtering=True,
-            expected_piece_count=expected_pieces
-        )
-        self.logger.info(f"After filtering: {len(filtered_contours)} contours")
-        
-        # Apply mean-based filtering if enabled and we have enough contours
-        if self.config.USE_MEAN_FILTERING and len(filtered_contours) > 1:
-            # Calculate areas
-            areas = [cv2.contourArea(cnt) for cnt in filtered_contours]
-            
-            # Use more robust statistics: median and median absolute deviation
-            from scipy import stats
-            median_area = np.median(areas)
-            mad = stats.median_abs_deviation(areas)
-            
-            # Define acceptable range using median absolute deviation
-            # (more robust to outliers than mean/stddev)
-            deviation_threshold = self.config.MEAN_DEVIATION_THRESHOLD
-            min_acceptable = median_area - deviation_threshold * mad
-            max_acceptable = median_area + deviation_threshold * mad
-            
-            # Filter contours based on area deviation from median
-            mean_filtered_contours = []
-            rejected_contours = []
-            
-            for i, cnt in enumerate(filtered_contours):
-                area = cv2.contourArea(cnt)
-                if min_acceptable <= area <= max_acceptable:
-                    mean_filtered_contours.append(cnt)
-                else:
-                    rejected_contours.append(cnt)
-            
-            # Log statistics
-            self.logger.info(f"Median contour area: {median_area:.2f}, MAD: {mad:.2f}")
-            self.logger.info(f"Acceptable area range: {min_acceptable:.2f} to {max_acceptable:.2f}")
-            self.logger.info(f"Rejected {len(rejected_contours)} contours with outlier areas")
-            self.logger.info(f"After median-based filtering: {len(mean_filtered_contours)} contours")
-            
-            filtered_contours = mean_filtered_contours
-            
-            # Recovery step: check if any rejected contours could actually be valid pieces
-            if expected_pieces and len(filtered_contours) < expected_pieces * 0.9:
-                # Check if any rejected contours are actually valid puzzle pieces
-                valid_rejects = []
-                for cnt in rejected_contours:
-                    # Apply more sophisticated validation
-                    if validate_shape_as_puzzle_piece(cnt):
-                        valid_rejects.append(cnt)
-                
-                if valid_rejects:
-                    self.logger.info(f"Recovered {len(valid_rejects)} valid pieces from rejected contours")
-                    filtered_contours.extend(valid_rejects)
-        
-        # Create contour visualization
-        contour_vis = original_image.copy()
-        for i, contour in enumerate(filtered_contours):
-            # Generate random color for each contour
-            color = (
-                np.random.randint(0, 255),
-                np.random.randint(0, 255),
-                np.random.randint(0, 255)
-            )
-            cv2.drawContours(contour_vis, [contour], -1, color, 2)
-            
-            # Add contour index
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                cv2.putText(contour_vis, str(i), (cx, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        
-        self.save_debug_image(contour_vis, "05_contours.jpg")
-        
-        return filtered_contours
+        self.save_debug_image(cleaned, "03_cleaned.jpg")
 
-    # Create a modified version of recover_missed_pieces function in detector.py
-    def recover_missed_pieces(self, binary_image: np.ndarray, 
-                            detected_contours: List[np.ndarray],
-                            original_image: np.ndarray,
-                            expected_pieces: Optional[int] = None) -> List[np.ndarray]:
+        # Détection des bords - principalement pour la visualisation
+        edges = cv2.Canny(best_preprocessed, 50, 150)
+        self.save_debug_image(edges, "04_edges.jpg")
+
+        self.detection_stats['timing']['preprocessing'] = time.time(
+        ) - start_time
+
+        return best_preprocessed, cleaned, edges
+
+    def preprocess(self, image: np.ndarray, expected_pieces: Optional[int] = None, 
+             fast_mode: bool = False, image_path: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Attempt to recover pieces that were missed in initial detection
-        with improved deduplication
-        
+        Prétraite une image pour la détection des pièces de puzzle.
+        Sélectionne automatiquement la meilleure méthode selon la configuration.
+
         Args:
-            binary_image: Binary input image
-            detected_contours: Already detected contours
-            original_image: Original image
-            expected_pieces: Expected number of pieces
-        
+            image: Image couleur d'entrée
+            expected_pieces: Nombre attendu de pièces (optionnel)
+            fast_mode: Utiliser le mode rapide de prétraitement
+            image_path: Chemin de l'image pour le cache (optionnel)
+
         Returns:
-            List of additional detected contours
+            Tuple de (image prétraitée, image binaire, image des bords)
         """
-        # Only attempt recovery if we have expected_pieces and are missing some
+        # Vérifier le cache si le chemin de l'image est fourni
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import cache_preprocessing
+            
+            # Essayer de récupérer les résultats depuis le cache
+            adaptive = hasattr(self.config.preprocessing, 'USE_ADAPTIVE') and self.config.preprocessing.USE_ADAPTIVE
+            cached_result = cache_preprocessing(
+                self.pipeline_cache, 
+                image_path, 
+                fast_mode, 
+                adaptive,
+                expected_pieces
+            )
+            
+            if cached_result is not None:
+                self.logger.info("Résultats de prétraitement récupérés depuis le cache")
+                # Sauvegarder les images de débogage
+                if hasattr(self, 'save_debug_image'):
+                    self.save_debug_image(cached_result[0], "01_preprocessed.jpg")
+                    self.save_debug_image(cached_result[1], "02_binary.jpg")
+                    self.save_debug_image(cached_result[2], "03_edges.jpg")
+                return cached_result
+
+        # Optimisation pour les cas triviaux
+        if fast_mode:
+            result = self.preprocess_fast(image)
+            
+        # Choix du pipeline à utiliser en fonction de la configuration
+        elif hasattr(self.config.preprocessing, 'USE_ADAPTIVE') and self.config.preprocessing.USE_ADAPTIVE:
+            result = self.preprocess_adaptive(image, expected_pieces)
+            
+        else:
+            # Pipeline original simplifié
+            self.logger.info("Prétraitement de l'image avec pipeline standard...")
+
+            h, w = image.shape[:2]
+            self.logger.info(f"Dimensions originales de l'image: {w}x{h}")
+
+            # Prétraitement simplifié
+            preprocessed, binary_preproc, edges_preproc = preprocess_image(image)
+            self.save_debug_image(preprocessed, "01_preprocessed.jpg")
+
+            # Seuillage automatique
+            if self.config.preprocessing.USE_AUTO_THRESHOLD:
+                binary, method, _ = compare_threshold_methods(
+                    preprocessed,
+                    self.config.preprocessing.ADAPTIVE_BLOCK_SIZE,
+                    self.config.preprocessing.ADAPTIVE_C
+                )
+                self.logger.info(f"Méthode de seuillage sélectionnée: {method}")
+                self.save_debug_image(binary, f"02_{method}_binary.jpg")
+            else:
+                # Par défaut: utiliser Otsu
+                _, binary = cv2.threshold(
+                    preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                self.save_debug_image(binary, "02_binary.jpg")
+
+            # Opérations morphologiques pour nettoyer l'image binaire
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+            cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+            self.save_debug_image(cleaned, "03_cleaned.jpg")
+
+            # Détection des bords
+            edges = cv2.Canny(cleaned, 30, 200)
+            self.save_debug_image(edges, "04_edges.jpg")
+
+            result = (preprocessed, cleaned, edges)
+
+        # Mettre en cache les résultats si le cache est activé
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import save_preprocessing_to_cache
+            
+            adaptive = hasattr(self.config.preprocessing, 'USE_ADAPTIVE') and self.config.preprocessing.USE_ADAPTIVE
+            save_preprocessing_to_cache(
+                self.pipeline_cache,
+                image_path,
+                fast_mode,
+                adaptive,
+                expected_pieces,
+                result
+            )
+
+        return result
+
+    def optimize_detection_parameters(self, binary_image: np.ndarray, original_image: np.ndarray,
+                                      expected_pieces: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Optimise les paramètres de détection en fonction de l'image.
+
+        Args:
+            binary_image: Image binaire d'entrée
+            original_image: Image originale
+            expected_pieces: Nombre attendu de pièces
+
+        Returns:
+            Dictionnaire des paramètres optimaux
+        """
+        # Analyse de l'image
+        analysis = analyze_image(original_image)
+
+        # Calcul de l'aire maximale basée sur la taille de l'image
+        img_area = original_image.shape[0] * original_image.shape[1]
+        max_area = self.config.contour.MAX_AREA_RATIO * img_area
+
+        # Estimation de l'aire minimale en fonction de l'image
+        if expected_pieces:
+            # Estimation basée sur le nombre attendu de pièces
+            estimated_min_area = img_area / \
+                (expected_pieces * 2.5)  # Facteur de correction
+            min_area = max(self.config.contour.MIN_AREA,
+                           estimated_min_area * 0.5)
+        else:
+            # Estimation basée sur la taille de l'image
+            min_area = max(self.config.contour.MIN_AREA, img_area / 1000)
+
+        # Optimisation du seuil de solidité en fonction du contraste
+        if analysis['contrast'] < 0.4:
+            # Pour les images à faible contraste, être plus permissif
+            solidity_min = 0.6
+        else:
+            solidity_min = 0.7
+
+        # Optimisation des paramètres de filtrage
+        params = {
+            'min_area': min_area,
+            'max_area': max_area,
+            'min_perimeter': self.config.contour.MIN_PERIMETER,
+            'solidity_range': (solidity_min, 0.99),
+            'aspect_ratio_range': self.config.contour.ASPECT_RATIO_RANGE,
+            'use_statistical_filtering': True,
+            'expected_piece_count': expected_pieces
+        }
+
+        self.logger.info(
+            f"Paramètres optimisés: min_area={min_area:.0f}, solidity_min={solidity_min}")
+
+        return params
+
+    def detect_contours(self, binary_image: np.ndarray, original_image: np.ndarray,
+                  expected_pieces: Optional[int] = None, image_path: Optional[str] = None) -> List[np.ndarray]:
+        """
+        Détecte les contours des pièces de puzzle dans une image binaire.
+
+        Args:
+            binary_image: Image binaire d'entrée
+            original_image: Image originale (pour filtrage basé sur la taille)
+            expected_pieces: Nombre attendu de pièces
+            image_path: Chemin de l'image pour le cache (optionnel)
+
+        Returns:
+            Liste des contours détectés
+        """
+        start_time = time.time()
+        self.logger.info("Détection des contours avec approche optimisée...")
+        
+        # Vérifier le cache si activé
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import cache_contours
+            
+            # Paramètres pour la clé de cache
+            cache_params = {
+                'expected_pieces': expected_pieces,
+                'min_area': self.config.contour.MIN_AREA if hasattr(self.config.contour, 'MIN_AREA') else 1000,
+                'max_area_ratio': self.config.contour.MAX_AREA_RATIO if hasattr(self.config.contour, 'MAX_AREA_RATIO') else 0.3,
+                'image_size': original_image.shape[:2]
+            }
+            
+            # Essayer de récupérer depuis le cache
+            cached_contours = cache_contours(
+                self.pipeline_cache,
+                image_path,
+                binary_image,
+                cache_params['min_area'],
+                cache_params
+            )
+            
+            if cached_contours is not None:
+                self.logger.info(f"Contours récupérés depuis le cache: {len(cached_contours)} contours")
+                
+                # Mesurer le temps d'accès au cache
+                elapsed = time.time() - start_time
+                self.detection_stats['timing']['contour_detection'] = elapsed
+                self.detection_stats['timing']['cache_hit'] = True
+                
+                # Créer la visualisation des contours pour la cohérence
+                if cached_contours:
+                    contour_vis = original_image.copy()
+                    cv2.drawContours(contour_vis, cached_contours, -1, (0, 255, 0), 2)
+                    self.save_debug_image(contour_vis, "06_contours.jpg")
+                
+                return cached_contours
+
+        # Si pas de cache ou cache miss, continuer avec la détection normale
+        self.detection_stats['timing']['cache_hit'] = False
+        
+        # Optimisation: utiliser directement detect_puzzle_pieces si disponible
+        if hasattr(self, 'quick_detect') and self.quick_detect:
+            # Utilisation de la fonction optimisée intégrée
+            min_size = self.config.contour.MIN_AREA if hasattr(self.config.contour, 'MIN_AREA') else 1000
+            cleaned_binary, contours = detect_puzzle_pieces(
+                original_image, 
+                expected_min_size=min_size
+            )
+            self.save_debug_image(cleaned_binary, "05_optimized_binary.jpg")
+            
+            # Suivi des statistiques de performance
+            elapsed = time.time() - start_time
+            self.detection_stats['timing']['contour_detection'] = elapsed
+            self.logger.info(f"Détection rapide terminée en {elapsed:.3f}s, {len(contours)} contours trouvés")
+            
+            if contours:
+                # Dessiner les contours pour visualisation
+                contour_vis = original_image.copy()
+                cv2.drawContours(contour_vis, contours, -1, (0, 255, 0), 2)
+                self.save_debug_image(contour_vis, "06_contours.jpg")
+            
+            # Mettre en cache les contours si activé
+            if self.pipeline_cache and image_path:
+                from src.utils.cache_utils import save_contours_to_cache
+                
+                cache_params = {
+                    'expected_pieces': expected_pieces,
+                    'min_area': min_size,
+                    'max_area_ratio': self.config.contour.MAX_AREA_RATIO if hasattr(self.config.contour, 'MAX_AREA_RATIO') else 0.3,
+                    'image_size': original_image.shape[:2]
+                }
+                
+                save_contours_to_cache(
+                    self.pipeline_cache,
+                    image_path,
+                    binary_image,
+                    min_size,
+                    cache_params,
+                    contours
+                )
+            
+            return contours
+        
+        # Approche standard: trouver les contours puis les filtrer
+        # Optimisation des paramètres
+        params = self.optimize_detection_parameters(binary_image, original_image, expected_pieces)
+        
+        # Détection initiale des contours
+        contours = find_contours(binary_image)
+        self.logger.info(f"Trouvé {len(contours)} contours initiaux")
+        
+        # Filtrage des contours
+        filtered_contours = filter_contours(contours, **params)
+        
+        # Si trop peu de contours et nombre attendu fourni, essayer une récupération
+        if expected_pieces and len(filtered_contours) < expected_pieces * 0.7:
+            self.logger.info(f"Récupération: trouvé {len(filtered_contours)}/{expected_pieces} pièces attendues")
+            
+            # Essayer avec des paramètres plus permissifs
+            recovery_params = params.copy()
+            recovery_params['min_area'] *= 0.7
+            recovery_params['solidity_range'] = (0.5, 0.99)
+            
+            recovery_contours = filter_contours(contours, **recovery_params)
+            
+            if len(recovery_contours) > len(filtered_contours):
+                filtered_contours = recovery_contours
+                self.logger.info(f"Récupération réussie: {len(filtered_contours)} contours")
+        
+        # Optimisation finale des contours
+        optimized_contours = optimize_contours(filtered_contours, min_area=params['min_area'])
+        
+        # Création de la visualisation des contours
+        if optimized_contours:
+            contour_vis = original_image.copy()
+            cv2.drawContours(contour_vis, optimized_contours, -1, (0, 255, 0), 2)
+            self.save_debug_image(contour_vis, "06_contours.jpg")
+        
+        elapsed = time.time() - start_time
+        self.detection_stats['timing']['contour_detection'] = elapsed
+        self.logger.info(f"Détection des contours terminée en {elapsed:.3f}s, {len(optimized_contours)} contours filtrés")
+        
+        # Mettre en cache les contours si le cache est activé
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import save_contours_to_cache
+            
+            # Paramètres pour la clé de cache
+            cache_params = {
+                'expected_pieces': expected_pieces,
+                'min_area': params['min_area'],
+                'max_area_ratio': self.config.contour.MAX_AREA_RATIO if hasattr(self.config.contour, 'MAX_AREA_RATIO') else 0.3,
+                'image_size': original_image.shape[:2]
+            }
+            
+            # Mettre en cache les contours
+            save_contours_to_cache(
+                self.pipeline_cache,
+                image_path,
+                binary_image,
+                params['min_area'],
+                cache_params,
+                optimized_contours
+            )
+        
+        return optimized_contours
+
+    def recover_missed_pieces(self, binary_image, detected_contours, original_image, expected_pieces=None):
+        """Tente de récupérer les pièces manquantes de la détection initiale."""
+        # Ignorer si le nombre attendu est satisfait
         if not expected_pieces or len(detected_contours) >= expected_pieces:
             return []
-        
-        self.logger.info(f"Attempting to recover missed pieces. " +
-                    f"Found {len(detected_contours)}/{expected_pieces} expected pieces.")
-        
-        # Create a mask to exclude already detected pieces with padding
+
+        start_time = time.time()
+        self.logger.info(
+            f"Tentative de récupération: {len(detected_contours)}/{expected_pieces} pièces")
+
+        # Créer un masque d'exclusion des pièces déjà détectées
+        exclusion_mask = self._create_exclusion_mask(
+            binary_image, detected_contours)
+
+        # Appliquer le masque à l'image binaire
+        masked_binary = cv2.bitwise_and(
+            binary_image, binary_image, mask=exclusion_mask)
+        self.save_debug_image(masked_binary, "07_masked_binary.jpg")
+
+        # Trouver et filtrer les contours dans la zone masquée
+        recovery_contours = self._find_recovery_contours(
+            masked_binary, original_image)
+
+        # Validation et déduplication
+        valid_recovered = self._validate_and_deduplicate(
+            recovery_contours, detected_contours)
+
+        # Visualisation des résultats
+        if valid_recovered:
+            self._visualize_recovery(
+                original_image, detected_contours, valid_recovered)
+
+        elapsed = time.time() - start_time
+        self.detection_stats['timing']['contour_recovery'] = elapsed
+        self.logger.info(
+            f"Récupération: {len(valid_recovered)} pièces en {elapsed:.3f}s")
+
+        return valid_recovered
+
+    def _create_exclusion_mask(self, binary_image, contours):
+        """Crée un masque qui exclut les régions des contours détectés"""
         mask = np.ones_like(binary_image)
-        for contour in detected_contours:
-            # Create a slightly expanded contour to avoid detecting the same piece
+
+        for contour in contours:
+            # Créer un contour légèrement agrandi
             x, y, w, h = cv2.boundingRect(contour)
-            # Add padding around the bounding box
-            padding = 15  # Increased padding
+            padding = 15
             x_min = max(0, x - padding)
             y_min = max(0, y - padding)
             x_max = min(binary_image.shape[1], x + w + padding)
             y_max = min(binary_image.shape[0], y + h + padding)
-            
-            # Block out this region in the mask
+
+            # Bloquer cette région dans le masque
             mask[y_min:y_max, x_min:x_max] = 0
-        
-        # Apply mask to the binary image
-        masked_binary = cv2.bitwise_and(binary_image, binary_image, mask=mask)
-        self.save_debug_image(masked_binary, "06_masked_binary.jpg")
-        
-        # Initialize the recovered_contours list
-        recovered_contours = []
-        
-        # Try recovery with more lenient parameters
-        recovery_params = [
-            # More lenient parameters for small or irregular pieces
-            {'min_area': self.config.MIN_CONTOUR_AREA * 0.7, 
+
+        return mask
+
+    def _find_recovery_contours(self, masked_binary, original_image):
+        """Trouve les contours dans l'image binaire masquée avec des paramètres plus permissifs"""
+        # Paramètres de récupération plus permissifs
+        img_area = original_image.shape[0] * original_image.shape[1]
+
+        recovery_params = {
+            'min_area': self.config.contour.MIN_AREA * 0.7,
+            'max_area': self.config.contour.MAX_AREA_RATIO * img_area,
+            'min_perimeter': self.config.contour.MIN_PERIMETER * 0.8,
             'solidity_range': (0.5, 0.99),
-            'aspect_ratio_range': (0.2, 5.0)},
-            
-            # Try with morphological opening to separate touching pieces
-            {'min_area': self.config.MIN_CONTOUR_AREA * 0.8,
-            'solidity_range': (0.6, 0.99),
-            'aspect_ratio_range': (0.25, 4.0)},
-        ]
-        
-        for params in recovery_params:
-            # Find contours in the masked binary image
-            mask_contours, _ = cv2.findContours(masked_binary.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Calculate max area
-            img_area = original_image.shape[0] * original_image.shape[1]
-            max_area = self.config.MAX_CONTOUR_AREA_RATIO * img_area
-            
-            # Filter with current parameters
-            filtered = filter_contours(
-                mask_contours,
-                min_area=params['min_area'],
-                max_area=max_area,
-                min_perimeter=self.config.MIN_CONTOUR_PERIMETER,
-                solidity_range=params['solidity_range'],
-                aspect_ratio_range=params['aspect_ratio_range']
-            )
-            
-            # Validate each candidate recovery
-            valid_recoveries = []
-            for contour in filtered:
-                # Check if it's likely a valid puzzle piece
-                if validate_shape_as_puzzle_piece(contour):
-                    valid_recoveries.append(contour)
-            
-            self.logger.info(f"Recovery attempt: found {len(valid_recoveries)} potential pieces")
-            recovered_contours.extend(valid_recoveries)
-            
-            # If we've recovered enough pieces, stop
-            if len(detected_contours) + len(recovered_contours) >= expected_pieces:
-                break
-        
-        # Add stricter deduplication check before returning
+            'aspect_ratio_range': (0.2, 5.0)
+        }
+
+        # Trouver et filtrer les contours
+        mask_contours = find_contours(
+            masked_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return filter_contours(mask_contours, **recovery_params)
+
+    def _validate_and_deduplicate(self, recovery_contours, existing_contours):
+        """Valide chaque contour et élimine les doublons"""
+        valid_recoveries = [
+            c for c in recovery_contours if validate_shape_as_puzzle_piece(c)]
         final_recovered = []
-        for new_contour in recovered_contours:
-            is_duplicate = False
-            for existing_contour in detected_contours:
-                # Check for substantial overlap using IoU
-                if self._contours_match(new_contour, existing_contour, threshold=0.3):
-                    is_duplicate = True
-                    break
-            
-            # Also check against already recovered contours
-            for existing_recovered in final_recovered:
-                if self._contours_match(new_contour, existing_recovered, threshold=0.3):
-                    is_duplicate = True
-                    break
-                    
-            if not is_duplicate:
+
+        for new_contour in valid_recoveries:
+            # Vérifier s'il s'agit d'un doublon
+            if not any(self._contours_match(new_contour, existing)
+                       for existing in existing_contours + final_recovered):
                 final_recovered.append(new_contour)
-        
-        # Create visualization of recovered contours
-        if final_recovered:
-            recovery_vis = original_image.copy()
-            
-            # Draw original contours in green
-            cv2.drawContours(recovery_vis, detected_contours, -1, (0, 255, 0), 2)
-            
-            # Draw recovered contours in red
-            cv2.drawContours(recovery_vis, final_recovered, -1, (0, 0, 255), 2)
-            
-            self.save_debug_image(recovery_vis, "07_recovered_contours.jpg")
-        
-        self.logger.info(f"Recovered {len(final_recovered)} additional pieces after deduplication")
+
         return final_recovered
-    
+
+    def _visualize_recovery(self, original_image, original_contours, recovered_contours):
+        """Crée une visualisation des contours originaux et récupérés"""
+        recovery_vis = original_image.copy()
+
+        # Contours originaux en vert
+        cv2.drawContours(recovery_vis, original_contours, -1, (0, 255, 0), 2)
+
+        # Contours récupérés en rouge
+        cv2.drawContours(recovery_vis, recovered_contours, -1, (0, 0, 255), 2)
+
+        self.save_debug_image(recovery_vis, "08_recovered_contours.jpg")
+
     def _process_contour(self, args: Tuple[np.ndarray, np.ndarray, int]) -> Optional[PuzzlePiece]:
         """
-        Process a single contour to create a puzzle piece
-        
+        Traite un seul contour pour créer un objet PuzzlePiece.
+
         Args:
-            args: Tuple of (contour, image, index)
-        
+            args: Tuple de (contour, image, indice)
+
         Returns:
-            PuzzlePiece object or None if invalid
+            Objet PuzzlePiece ou None si invalide
         """
         contour, image, idx = args
         try:
@@ -719,321 +640,290 @@ class PuzzleDetector:
             piece.id = idx
             return piece
         except Exception as e:
-            self.logger.error(f"Error processing contour {idx}: {str(e)}")
+            self.logger.error(
+                f"Erreur lors du traitement du contour {idx}: {str(e)}")
             return None
-    
-    def process_contours(self, contours: List[np.ndarray], image: np.ndarray) -> List[PuzzlePiece]:
+
+    def process_contours(self, contours: List[np.ndarray], image: np.ndarray, 
+                   image_path: Optional[str] = None) -> List[PuzzlePiece]:
         """
-        Process contours to create puzzle piece objects
-        
+        Traite les contours pour créer des objets PuzzlePiece.
+
         Args:
-            contours: List of contours
-            image: Original image
-        
+            contours: Liste des contours
+            image: Image originale
+            image_path: Chemin de l'image pour le cache (optionnel)
+
         Returns:
-            List of valid puzzle pieces
+            Liste des pièces de puzzle valides
         """
-        self.logger.info("Processing contours to create pieces...")
+        if not contours:
+            return []
+
+        start_time = time.time()
+        self.logger.info("Traitement des contours pour créer les pièces...")
+        
+        # Vérifier le cache si activé
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import cache_pieces
+            
+            # Paramètres pour la clé de cache
+            cache_params = {
+                'image_size': image.shape[:2],
+                'config_hash': hash(tuple(sorted(self.config.to_dict().items())))
+            }
+            
+            # Essayer de récupérer depuis le cache
+            cached_pieces = cache_pieces(
+                self.pipeline_cache,
+                image_path,
+                contours,
+                cache_params
+            )
+            
+            if cached_pieces is not None:
+                self.logger.info(f"Pièces récupérées depuis le cache: {len(cached_pieces)} pièces")
+                
+                # Mesurer le temps d'accès au cache
+                elapsed = time.time() - start_time
+                self.detection_stats['timing']['contour_processing'] = elapsed
+                self.detection_stats['timing']['cache_hit'] = True
+                
+                return cached_pieces
+
+        # Si pas de cache ou cache miss, continuer avec le traitement normal
+        self.detection_stats['timing']['cache_hit'] = False
         
         pieces = []
-        
-        if self.config.USE_MULTIPROCESSING and len(contours) > 1:
-            # Prepare arguments for multiprocessing
+
+        # Traitement des contours en parallèle si activé
+        if self.config.performance.USE_MULTIPROCESSING and len(contours) > 1:
+            # Préparation des arguments pour le multitraitement
             args = [(contour, image, i) for i, contour in enumerate(contours)]
-            
-            # Use process pool for parallel processing
-            with Pool(processes=min(self.config.NUM_PROCESSES, cpu_count())) as pool:
+
+            # Utilisation d'un pool de processus pour le traitement parallèle
+            with Pool(processes=min(self.config.performance.NUM_PROCESSES, cpu_count())) as pool:
                 results = pool.map(self._process_contour, args)
-                pieces = [p for p in results if p is not None and p.is_valid]
+                pieces = [p for p in results if p is not None]
         else:
-            # Sequential processing
+            # Traitement séquentiel
             for i, contour in enumerate(contours):
-                piece = self._process_contour((contour, image, i))
-                if piece is not None and piece.is_valid:
+                try:
+                    piece = PuzzlePiece(image, contour, self.config)
+                    piece.id = i
                     pieces.append(piece)
+                except Exception as e:
+                    self.logger.error(
+                        f"Erreur lors du traitement du contour {i}: {str(e)}")
+
+        # Filtrer les pièces non valides
+        valid_pieces = [p for p in pieces if p.is_valid]
+
+        elapsed = time.time() - start_time
+        self.detection_stats['timing']['contour_processing'] = elapsed
+        self.logger.info(
+            f"Traitement terminé en {elapsed:.3f}s: {len(valid_pieces)}/{len(pieces)} pièces valides")
         
-        self.logger.info(f"Found {len(pieces)} valid pieces")
-        return pieces
-    
-    def detect(self, image: np.ndarray, expected_pieces: Optional[int] = None) -> Tuple[List[PuzzlePiece], Dict[str, np.ndarray]]:
+        # À la fin, mettre en cache les pièces si le cache est activé
+        if self.pipeline_cache and image_path:
+            from src.utils.cache_utils import save_pieces_to_cache
+            
+            # Paramètres pour la clé de cache
+            cache_params = {
+                'image_size': image.shape[:2],
+                'config_hash': hash(tuple(sorted(self.config.to_dict().items())))
+            }
+            
+            # Mettre en cache les pièces
+            save_pieces_to_cache(
+                self.pipeline_cache,
+                image_path,
+                contours,
+                cache_params,
+                valid_pieces
+            )
+
+        return valid_pieces
+
+    def detect(self, image: np.ndarray, expected_pieces: Optional[int] = None,
+           fast_mode: bool = False, image_path: Optional[str] = None) -> Tuple[List[PuzzlePiece], Dict[str, np.ndarray]]:
         """
-        Enhanced puzzle piece detection with parameter optimization and recovery
-        
+        Détecte les pièces de puzzle dans une image.
+
         Args:
-            image: Input color image
-            expected_pieces: Expected number of pieces
-        
+            image: Image couleur d'entrée
+            expected_pieces: Nombre attendu de pièces
+            fast_mode: Utiliser le mode rapide de détection
+            image_path: Chemin de l'image pour le cache (optionnel)
+
         Returns:
-            Tuple of (list of puzzle pieces, dict of debug images)
+            Tuple de (liste des pièces de puzzle, dictionnaire des images de débogage)
         """
-        start_time = time.time()
-        self.logger.info("Starting enhanced puzzle piece detection")
-        
-        # Preprocess the image
-        preprocessed, binary, edges = self.preprocess(image, expected_pieces)
-        
-        # Detect contours with parameter optimization
-        contours = self.detect_contours(binary, image, expected_pieces)
-        
-        # Attempt to recover missed pieces if appropriate
+        total_start_time = time.time()
+        self.logger.info("Démarrage de la détection des pièces de puzzle")
+        self.debug_images = {}  # Réinitialisation des images de débogage
+
+        # Utiliser le pipeline de détection rapide si demandé
+        if fast_mode:
+            self.logger.info("Utilisation du mode rapide de détection")
+            self.quick_detect = True
+            preprocessed, binary, edges = self.preprocess_fast(image)
+        else:
+            self.quick_detect = False
+            preprocessed, binary, edges = self.preprocess(
+                image, expected_pieces, fast_mode, image_path)
+
+        # Détection des contours
+        contours = self.detect_contours(binary, image, expected_pieces, image_path)
+
+        # Tentative de récupération des pièces manquantes si approprié
         if expected_pieces and len(contours) < expected_pieces:
-            recovered_contours = self.recover_missed_pieces(binary, contours, image, expected_pieces)
+            recovered_contours = self.recover_missed_pieces(
+                binary, contours, image, expected_pieces)
             if recovered_contours:
-                self.logger.info(f"Recovered {len(recovered_contours)} additional pieces")
+                self.logger.info(
+                    f"Récupéré {len(recovered_contours)} pièces supplémentaires")
                 contours.extend(recovered_contours)
-        
-        # Process contours to create puzzle pieces
-        pieces = self.process_contours(contours, image)
-        
-        # Create a visualization of all valid pieces
+
+        # Traitement des contours pour créer des objets PuzzlePiece
+        pieces = self.process_contours(contours, image, image_path)
+
+        # Création d'une visualisation de toutes les pièces valides
         piece_vis = image.copy()
         for piece in pieces:
             piece_vis = piece.draw(piece_vis)
-        
-        self.save_debug_image(piece_vis, "08_detected_pieces.jpg")
-        
-        # If we still have fewer pieces than expected, consider adaptive thresholding
-        if expected_pieces and len(pieces) < expected_pieces * 0.8 and not hasattr(self.config, 'USE_ADAPTIVE_PREPROCESSING'):
-            self.logger.info(f"Low detection rate ({len(pieces)}/{expected_pieces}). Trying adaptive preprocessing.")
-            
-            # Try with adaptive preprocessing
-            adaptive_preprocessed, adaptive_binary, adaptive_edges = self.preprocess_adaptive(image, expected_pieces)
-            
-            # Detect contours with the new binary image
-            adaptive_contours = self.detect_contours(adaptive_binary, image, expected_pieces)
-            
-            # Process these contours
-            adaptive_pieces = self.process_contours(adaptive_contours, image)
-            
-            # If adaptive approach found more pieces, use those results
-            if len(adaptive_pieces) > len(pieces):
-                self.logger.info(f"Adaptive preprocessing found {len(adaptive_pieces)} pieces (vs. {len(pieces)} with standard approach)")
-                
-                # Update visualizations
-                adaptive_piece_vis = image.copy()
-                for piece in adaptive_pieces:
-                    adaptive_piece_vis = piece.draw(adaptive_piece_vis)
-                
-                self.save_debug_image(adaptive_piece_vis, "09_adaptive_detected_pieces.jpg")
-                
-                # Update our results
-                pieces = adaptive_pieces
-                preprocessed = adaptive_preprocessed
-                binary = adaptive_binary
-                edges = adaptive_edges
-                piece_vis = adaptive_piece_vis
-        
-        elapsed_time = time.time() - start_time
-        self.logger.info(f"Detection completed in {elapsed_time:.2f} seconds")
-        
-        # Record detection results
+
+        self.save_debug_image(piece_vis, "09_detected_pieces.jpg")
+
+        # Mesure du temps total
+        total_elapsed = time.time() - total_start_time
+        self.detection_stats['timing']['total'] = total_elapsed
+        self.logger.info(f"Détection terminée en {total_elapsed:.3f} secondes")
+
+        # Enregistrement des résultats de détection
         self.detection_stats['results'] = {
-            'found_pieces': len(pieces),
+            'pieces_found': len(pieces),
             'expected_pieces': expected_pieces,
             'detection_rate': len(pieces) / expected_pieces if expected_pieces else None,
-            'elapsed_time': elapsed_time
+            'total_elapsed_time': total_elapsed,
+            'cache_used': self.pipeline_cache is not None
         }
-        
-        # Return the pieces and debug images
+
+        # Retour des pièces et des images de débogage
         debug_images = {
             'preprocessed': preprocessed,
             'binary': binary,
             'edges': edges,
             'piece_visualization': piece_vis
         }
-        
+
         return pieces, debug_images
 
-    def multi_pass_detection(self, image: np.ndarray, expected_pieces: Optional[int] = None) -> Tuple[List[PuzzlePiece], Dict[str, np.ndarray]]:
+    def detect_optimal(self, image: np.ndarray, expected_pieces: Optional[int] = None) -> List[PuzzlePiece]:
         """
-        Multi-pass detection with different parameters to maximize piece detection
-        
+        Détection optimisée avec sélection automatique des meilleurs paramètres.
+
         Args:
-            image: Input color image
-            expected_pieces: Expected number of pieces
-        
+            image: Image couleur d'entrée
+            expected_pieces: Nombre attendu de pièces
+
         Returns:
-            Tuple of (list of puzzle pieces, dict of debug images)
+            Liste des pièces détectées
         """
-        # Initialize storage for results from different passes
-        all_pieces = []
-        all_contours = []
-        best_debug_images = {}
-        
-        # Pass 1: Standard detection
-        pieces1, debug_images1 = self.detect(image, expected_pieces)
-        all_pieces.extend(pieces1)
-        
-        # Extract contours from pieces for uniqueness checking
-        contours1 = [piece.contour for piece in pieces1]
-        all_contours.extend(contours1)
-        
-        self.logger.info(f"Pass 1: Detected {len(pieces1)} pieces")
-        
-        # If we already found all expected pieces, skip additional passes
-        if expected_pieces and len(all_pieces) >= expected_pieces:
-            return all_pieces, debug_images1
-        
-        # Pass 2: Try with different preprocessing parameters
-        # Temporarily modify config for second pass
-        original_settings = {}
-        
-        # If we used standard pipeline first, try adaptive now
-        if not hasattr(self.config, 'USE_ADAPTIVE_PREPROCESSING'):
-            original_settings['USE_ADAPTIVE_PREPROCESSING'] = getattr(self.config, 'USE_ADAPTIVE_PREPROCESSING', False)
-            self.config.USE_ADAPTIVE_PREPROCESSING = True
-        # If we used adaptive first, try standard with Sobel
-        else:
-            original_settings['USE_SOBEL_PIPELINE'] = self.config.USE_SOBEL_PIPELINE
-            self.config.USE_SOBEL_PIPELINE = not self.config.USE_SOBEL_PIPELINE
-        
-        # Modify mean threshold for second pass
-        original_settings['MEAN_DEVIATION_THRESHOLD'] = self.config.MEAN_DEVIATION_THRESHOLD
-        self.config.MEAN_DEVIATION_THRESHOLD = self.config.MEAN_DEVIATION_THRESHOLD * 1.5  # More permissive
-        
-        # Run second pass detection
-        pieces2, debug_images2 = self.detect(image, expected_pieces)
-        
-        # Restore original settings
-        for setting, value in original_settings.items():
-            setattr(self.config, setting, value)
-        
-        # Filter out duplicate pieces
-        unique_pieces2 = []
-        for piece in pieces2:
-            is_duplicate = False
-            for contour in all_contours:
-                if self._contours_match(piece.contour, contour):
-                    is_duplicate = True
-                    break
-            
-            if not is_duplicate:
-                unique_pieces2.append(piece)
-                all_contours.append(piece.contour)
-        
-        self.logger.info(f"Pass 2: Detected {len(pieces2)} pieces, {len(unique_pieces2)} unique")
-        all_pieces.extend(unique_pieces2)
-        
-        # Combine debug images (use first pass as base, add second pass if it found unique pieces)
-        best_debug_images = debug_images1
-        if unique_pieces2:
-            # Create a combined visualization
-            combined_vis = image.copy()
-            
-            # Draw first pass pieces in green
-            for piece in pieces1:
-                cv2.drawContours(combined_vis, [piece.contour], -1, (0, 255, 0), 2)
-            
-            # Draw unique second pass pieces in blue
-            for piece in unique_pieces2:
-                cv2.drawContours(combined_vis, [piece.contour], -1, (255, 0, 0), 2)
-            
-            best_debug_images['combined_visualization'] = combined_vis
-            self.save_debug_image(combined_vis, "10_combined_detection.jpg")
-        
-        return all_pieces, best_debug_images
-    
-    def _contours_match(self, contour1: np.ndarray, contour2: np.ndarray, 
-                    threshold: float = 0.3) -> bool:
+        start_time = time.time()
+        self.logger.info("Démarrage de la détection optimisée")
+
+        # Analyse de l'image pour déterminer la meilleure stratégie
+        analysis = analyze_image(image)
+
+        # Déterminer si on utilise le mode rapide ou complet
+        use_fast_mode = analysis['contrast'] > 0.6 and analysis['is_dark_background']
+
+        # Exécuter la détection avec le mode approprié
+        pieces, _ = self.detect(image, expected_pieces,
+                                fast_mode=use_fast_mode)
+
+        # Si la détection rapide n'a pas bien fonctionné, essayer le mode complet
+        if use_fast_mode and (not pieces or (expected_pieces and len(pieces) < expected_pieces * 0.7)):
+            self.logger.info(
+                "Mode rapide insuffisant, passage au mode complet")
+            pieces, _ = self.detect(image, expected_pieces, fast_mode=False)
+
+        elapsed = time.time() - start_time
+        self.logger.info(
+            f"Détection optimisée terminée en {elapsed:.3f}s: {len(pieces)} pièces trouvées")
+
+        return pieces
+
+    def _contours_match(self, contour1: np.ndarray, contour2: np.ndarray) -> bool:
         """
-        Enhanced check if two contours match (represent same object)
-        with more strict criteria to prevent duplicates
-        
+        Vérifie si deux contours correspondent (représentent la même pièce).
+
         Args:
-            contour1: First contour
-            contour2: Second contour
-            threshold: Matching threshold (0.0 to 1.0)
-        
+            contour1: Premier contour
+            contour2: Deuxième contour
+
         Returns:
-            True if contours likely represent the same piece
+            True si les contours représentent probablement la même pièce
         """
-        # Get bounding boxes
+        # Obtenir les rectangles englobants
         x1, y1, w1, h1 = cv2.boundingRect(contour1)
         x2, y2, w2, h2 = cv2.boundingRect(contour2)
-        
-        # Calculate IoU of bounding boxes
-        # Intersection rectangle
+
+        # Calculer l'IoU des rectangles englobants
+        # Rectangle d'intersection
         x_inter = max(x1, x2)
         y_inter = max(y1, y2)
         w_inter = min(x1 + w1, x2 + w2) - x_inter
         h_inter = min(y1 + h1, y2 + h2) - y_inter
-        
-        # If there's no overlap, they don't match
+
+        # S'il n'y a pas de chevauchement, ils ne correspondent pas
         if w_inter <= 0 or h_inter <= 0:
             return False
-        
-        # Calculate areas
+
+        # Calculer les aires
         area_inter = w_inter * h_inter
         area1 = w1 * h1
         area2 = w2 * h2
         area_union = area1 + area2 - area_inter
-        
-        # Calculate IoU
+
+        # Calculer l'IoU
         iou = area_inter / area_union
-        
-        # Check centroid distance
+
+        # Vérifier la distance des centroïdes
         m1 = cv2.moments(contour1)
         m2 = cv2.moments(contour2)
-        
+
         if m1["m00"] > 0 and m2["m00"] > 0:
             cx1 = m1["m10"] / m1["m00"]
             cy1 = m1["m01"] / m1["m00"]
             cx2 = m2["m10"] / m2["m00"]
             cy2 = m2["m01"] / m2["m00"]
-            
-            # Calculate distance between centroids
+
+            # Calculer la distance entre les centroïdes
             distance = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
-            
-            # If centroids are very close, likely same piece
-            if distance < 50:  # Adjust this threshold as needed
+
+            # Si les centroïdes sont très proches, probablement la même pièce
+            if distance < 50:
                 return True
-        
-        # Return true if IoU exceeds threshold
-        return iou > threshold
-    def validate_puzzle_piece(contour, image):
+
+        # Retourner vrai si l'IoU dépasse le seuil
+        return iou > 0.3  # Seuil de 30% de chevauchement
+
+    def get_detection_statistics(self) -> Dict[str, Any]:
         """
-        Comprehensive validation of puzzle piece characteristics
-        
-        Args:
-            contour: Contour to validate
-            image: Original image
-        
+        Obtient les statistiques de performance de la dernière détection.
+
         Returns:
-            True if contour represents a valid puzzle piece
+            Dictionnaire des statistiques de détection
         """
-        # Basic shape validation
-        if not validate_shape_as_puzzle_piece(contour):
-            return False
-            
-        # Extract the piece image
-        x, y, w, h = cv2.boundingRect(contour)
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        cv2.drawContours(mask, [contour], 0, 255, -1)
-        
-        # Create ROI
-        roi = image[y:y+h, x:x+w]
-        mask_roi = mask[y:y+h, x:x+w]
-        
-        # Check color variation within the piece (puzzle pieces should have meaningful content)
-        if len(image.shape) == 3:  # Color image
-            # Convert to grayscale
-            if len(roi.shape) == 3:
-                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            else:
-                gray_roi = roi
-                
-            # Calculate standard deviation of pixel values within the piece
-            piece_pixels = gray_roi[mask_roi > 0]
-            if len(piece_pixels) > 0:
-                std_dev = np.std(piece_pixels)
-                # Shadow artifacts typically have very low color variation
-                if std_dev < 15.0:  # Adjust this threshold as needed
-                    return False
-        
-        # Check for abnormal darkness (shadows are typically very dark)
-        if len(piece_pixels) > 0:
-            mean_value = np.mean(piece_pixels)
-            if mean_value < 30:  # Very dark pieces are likely shadows
-                return False
-        
-        return True
+        return self.detection_stats
+
+    def get_debug_images(self) -> Dict[str, np.ndarray]:
+        """
+        Obtient les images de débogage générées pendant la détection.
+
+        Returns:
+            Dictionnaire des images de débogage
+        """
+        return self.debug_images

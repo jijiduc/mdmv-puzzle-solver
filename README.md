@@ -111,16 +111,8 @@ pip install -r requirements.txt
 # Basic usage
 python main.py --image picture\puzzle_24-1\b-2.jpg 
 
-# Enhanced usage with all optimizations
-python main.py --image picture\puzzle_24-1\b-2.jpg --pieces 24 --adaptive-preprocessing --optimize-parameters --multi-pass --extract
-
-python main.py --image picture\puzzle_24-1\b-2.jpg  --pieces 24 --comprehensive-verification --adaptive-preprocessing --optimize-parameters --area-verification --area-threshold 2.5
-
-# Analysis of image characteristics 
-python main.py --image picture\puzzle_24-1\b-2.jpg --analyze-image
-
-# Adjust mean filtering threshold
-python main.py --image puzzle.jpg --mean-threshold 2.0
+# Actual usage
+python main.py --image picture\puzzle_24-1\b-2.jpg --pieces 24 --use-multiprocessing --processes 14 --use-cache --clear-cache --cache-dir cache --adaptive-preprocessing --comprehensive-verification --debug --save-results --profile --analyze-image --area-verification --max-cache-size 4000
 ```
 
 ### Command-line options

@@ -1,48 +1,45 @@
 """
-Enhanced utility functions for image processing with adaptive techniques
+Utilitaires de traitement d'image optimisés pour la segmentation des pièces de puzzle
+avec un accent sur la performance et l'efficacité.
 """
 
 import cv2
 import numpy as np
 import os
 from typing import Tuple, Optional, Union, List, Dict, Any
-from scipy import ndimage
 
 
 def read_image(path: str) -> np.ndarray:
     """
-    Read an image from file
+    Lit une image à partir d'un fichier de manière efficace.
     
     Args:
-        path: Path to the image file
+        path: Chemin vers le fichier image
     
     Returns:
-        Image as numpy array
+        Image sous forme de tableau NumPy
     
     Raises:
-        FileNotFoundError: If the image file doesn't exist
-        ValueError: If the image couldn't be read
+        FileNotFoundError: Si le fichier n'existe pas
+        ValueError: Si l'image ne peut pas être lue
     """
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Image file not found: {path}")
+        raise FileNotFoundError(f"Fichier image non trouvé: {path}")
     
     image = cv2.imread(path)
     if image is None:
-        raise ValueError(f"Unable to read image from {path}")
+        raise ValueError(f"Impossible de lire l'image {path}")
     
     return image
 
 
 def save_image(image: np.ndarray, path: str) -> None:
     """
-    Save an image to file
+    Sauvegarde une image dans un fichier.
     
     Args:
-        image: Image as numpy array
-        path: Destination path
-    
-    Returns:
-        None
+        image: Image sous forme de tableau NumPy
+        path: Chemin de destination
     """
     directory = os.path.dirname(path)
     if directory and not os.path.exists(directory):
@@ -51,30 +48,41 @@ def save_image(image: np.ndarray, path: str) -> None:
     cv2.imwrite(path, image)
 
 
-def resize_image(image: np.ndarray, 
-                 width: Optional[int] = None, 
-                 height: Optional[int] = None, 
-                 scale: Optional[float] = None) -> np.ndarray:
+def resize_image(image: np.ndarray, width: Optional[int] = None, height: Optional[int] = None, 
+                scale: Optional[float] = None, max_dimension: Optional[int] = None) -> np.ndarray:
     """
-    Resize an image with various options
+    Redimensionne une image efficacement avec plusieurs options.
     
     Args:
-        image: Input image
-        width: Target width (if None, calculated from height and aspect ratio)
-        height: Target height (if None, calculated from width and aspect ratio)
-        scale: Scale factor (overrides width and height if provided)
-    
+        image: Image d'entrée
+        width: Largeur cible
+        height: Hauteur cible
+        scale: Facteur d'échelle
+        max_dimension: Dimension maximale (largeur ou hauteur) pour limitation de la taille
+        
     Returns:
-        Resized image
+        Image redimensionnée
     """
-    if scale is not None:
-        return cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    
+    # Méthode rapide si aucun redimensionnement n'est nécessaire
+    if (width is None and height is None and scale is None and max_dimension is None):
+        return image
+        
     h, w = image.shape[:2]
     
-    if width is None and height is None:
+    # Option de dimension maximale pour limiter la taille des grandes images
+    if max_dimension is not None:
+        if max(h, w) > max_dimension:
+            scale = max_dimension / max(h, w)
+            return cv2.resize(image, None, fx=scale, fy=scale, 
+                            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
         return image
+        
+    if scale is not None:
+        # Redimensionnement par facteur d'échelle
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+        return cv2.resize(image, None, fx=scale, fy=scale, interpolation=interp)
     
+    # Calcul des dimensions cibles
     if width is None:
         aspect_ratio = w / h
         width = int(height * aspect_ratio)
@@ -82,724 +90,955 @@ def resize_image(image: np.ndarray,
         aspect_ratio = h / w
         height = int(width * aspect_ratio)
     
-    return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+    # Choix de l'interpolation en fonction du redimensionnement
+    is_downscale = (width * height) < (w * h)
+    interp = cv2.INTER_AREA if is_downscale else cv2.INTER_LINEAR
+    
+    return cv2.resize(image, (width, height), interpolation=interp)
+
+
+def fast_grayscale(image: np.ndarray) -> np.ndarray:
+    """
+    Convertit rapidement une image en niveaux de gris.
+    
+    Args:
+        image: Image d'entrée
+        
+    Returns:
+        Image en niveaux de gris
+    """
+    if len(image.shape) == 2:
+        return image
+    elif len(image.shape) == 3:
+        # Utilise le canal vert si l'image est BGR/RGB (meilleure perception pour l'oeil humain)
+        if image.shape[2] == 3:
+            return image[:, :, 1]
+        # Conversion standard pour les autres types
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return image
 
 
 def analyze_image(image: np.ndarray) -> Dict[str, Any]:
     """
-    Analyze image characteristics to determine optimal processing parameters
+    Analyse complète des caractéristiques d'une image pour optimiser le traitement.
     
     Args:
-        image: Input color image
-    
+        image: Image d'entrée
+        
     Returns:
-        Dictionary with image analysis results
+        Dictionnaire avec les caractéristiques détaillées de l'image
     """
-    results = {}
+    # Utiliser d'abord l'analyse rapide
+    quick_analysis = quick_analyze_image(image)
     
-    # Convert to grayscale for certain analyses
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image.copy()
+    # Conversion en niveaux de gris si nécessaire
+    gray = fast_grayscale(image) if len(image.shape) == 3 else image.copy()
     
-    # Calculate histogram
+    # Analyses supplémentaires plus détaillées
+    # 1. Mesures de netteté
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    
+    # 2. Détection des bords pour évaluer la densité
+    edges = cv2.Canny(gray, 50, 150)
+    edge_density = np.count_nonzero(edges) / edges.size
+    
+    # 3. Analyse de l'histogramme plus détaillée
     hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+    hist = hist.flatten() / hist.sum()
     
-    # Calculate basic statistics
-    results['mean'] = np.mean(gray)
-    results['std'] = np.std(gray)
-    results['median'] = np.median(gray)
-    
-    # Calculate histogram peaks (modes)
+    # Identifier les pics et vallées significatifs
     peaks = []
+    valleys = []
     for i in range(1, 255):
-        if hist[i] > hist[i-1] and hist[i] > hist[i+1] and hist[i] > 0.01 * gray.size:
-            peaks.append((i, hist[i][0]))
-    
-    # Sort peaks by height (frequency)
-    peaks.sort(key=lambda x: x[1], reverse=True)
-    results['histogram_peaks'] = peaks[:5]  # Store top 5 peaks
-    
-    # Check for bimodal histogram (typical for puzzle pieces on dark background)
-    is_bimodal = False
-    if len(peaks) >= 2:
-        peak_values = [p[0] for p in peaks[:2]]
-        peak_values.sort()
-        
-        # Check if peaks are far apart (suggesting foreground and background)
-        if peak_values[1] - peak_values[0] > 50:
-            is_bimodal = True
-    
-    results['is_bimodal'] = is_bimodal
-    
-    # Calculate otsu threshold - useful to separate background and foreground
-    otsu_thresh, _ = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    results['otsu_threshold'] = otsu_thresh
-    
-    # Estimate background color
-    # For black background, the first peak is usually the background
-    if is_bimodal and peaks[0][0] < 100:  # If darkest peak is dark and prominent
-        results['background_is_dark'] = True
-        results['background_value'] = peaks[0][0]
-    else:
-        # Try to determine if background is dark or light
-        dark_ratio = np.sum(gray < 100) / gray.size
-        if dark_ratio > 0.5:  # If more than 50% of image is dark
-            results['background_is_dark'] = True
-            results['background_value'] = np.mean(gray[gray < 100])
-        else:
-            results['background_is_dark'] = False
-            results['background_value'] = np.mean(gray[gray > 155])
-    
-    # Calculate noise estimation
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    noise = gray.astype(np.float32) - blurred.astype(np.float32)
-    results['noise_level'] = np.std(noise)
-    
-    # Image contrast estimation
-    p5 = np.percentile(gray, 5)
-    p95 = np.percentile(gray, 95)
-    results['contrast'] = (p95 - p5) / 255.0
-    
-    # Color analysis if it's a color image
-    if len(image.shape) == 3:
-        # Convert to HSV for better color analysis
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        results['saturation_mean'] = np.mean(hsv[:,:,1])
-        results['value_mean'] = np.mean(hsv[:,:,2])
-        
-        # Calculate color variance (useful for determining if pieces are varied in color)
-        results['color_variance'] = np.mean(np.var(image, axis=(0, 1)))
-    
-    return results
-
-
-def enhance_contrast(image: np.ndarray, clip_limit: float = 2.0, tile_grid_size: tuple = (8, 8)) -> np.ndarray:
-    """
-    Enhanced contrast adjustment using CLAHE with adaptive parameters
-    
-    Args:
-        image: Input image (color or grayscale)
-        clip_limit: Threshold for contrast limiting (adaptive)
-        tile_grid_size: Size of grid for histogram equalization
-    
-    Returns:
-        Contrast-enhanced image
-    """
-    # Analyze image to determine optimal parameters
-    img_analysis = analyze_image(image)
-    
-    # Adapt clip limit based on image contrast
-    adaptive_clip_limit = clip_limit
-    if img_analysis.get('contrast', 0) < 0.3:  # Low contrast image
-        adaptive_clip_limit = clip_limit * 2  # More aggressive enhancement
-    elif img_analysis.get('contrast', 0) > 0.7:  # High contrast image
-        adaptive_clip_limit = clip_limit * 0.7  # Less aggressive enhancement
-    
-    if len(image.shape) == 3 and image.shape[2] == 3:
-        # Convert to LAB color space for better contrast enhancement
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        
-        # Apply CLAHE to L channel with adaptive parameters
-        clahe = cv2.createCLAHE(clipLimit=adaptive_clip_limit, tileGridSize=tile_grid_size)
-        enhanced_l = clahe.apply(l)
-        
-        # Merge channels and convert back to BGR
-        enhanced_lab = cv2.merge([enhanced_l, a, b])
-        return cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-    else:
-        # Grayscale image
-        clahe = cv2.createCLAHE(clipLimit=adaptive_clip_limit, tileGridSize=tile_grid_size)
-        return clahe.apply(image)
-
-
-def multi_channel_preprocess(image: np.ndarray) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
-    """
-    Advanced preprocessing using multiple color spaces and channels
-    
-    Args:
-        image: Input color image
-    
-    Returns:
-        Tuple of (best preprocessed image, dictionary of all channel representations)
-    """
-    # Analyze image first
-    analysis = analyze_image(image)
-    
-    # Create dictionary to store all processed channels
-    channels = {}
-    
-    # Basic grayscale conversion
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    channels['gray'] = gray.copy()
-    
-    # Apply basic blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    channels['blurred_gray'] = blurred
-    
-    # Enhanced contrast using CLAHE
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(blurred)
-    channels['enhanced_gray'] = enhanced
-    
-    # HSV color space processing (good for color segmentation)
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    
-    # Store individual HSV channels
-    channels['hsv_hue'] = h
-    channels['hsv_saturation'] = s
-    channels['hsv_value'] = v
-    
-    # Enhanced value channel (often good for separating puzzle pieces)
-    enhanced_v = clahe.apply(v)
-    channels['enhanced_value'] = enhanced_v
-    
-    # LAB color space processing
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    
-    # Store individual LAB channels
-    channels['lab_lightness'] = l
-    channels['lab_a'] = a
-    channels['lab_b'] = b
-    
-    # Enhanced lightness channel
-    enhanced_l = clahe.apply(l)
-    channels['enhanced_lightness'] = enhanced_l
-    
-    # Create specialized feature channels to highlight edges
-    # Sobel gradient magnitude
-    sobelx = cv2.Sobel(enhanced, cv2.CV_64F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(enhanced, cv2.CV_64F, 0, 1, ksize=3)
-    sobel_mag = cv2.magnitude(sobelx, sobely)
-    sobel_mag = cv2.normalize(sobel_mag, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    channels['sobel_magnitude'] = sobel_mag
-    
-    # Background removal based on analysis
-    if analysis['background_is_dark']:
-        # For dark background, we can enhance the contrast between background and pieces
-        background_mask = (gray < analysis['background_value'] + 30)
-        foreground = gray.copy()
-        foreground[background_mask] = 0
-        foreground = clahe.apply(foreground)
-        channels['background_removed'] = foreground
-    
-    # Determine the best channel to return based on image analysis
-    # For puzzle pieces on dark background, enhanced value channel or background removal often works best
-    if analysis['background_is_dark']:
-        if analysis['contrast'] < 0.4:
-            best_channel = channels['enhanced_value']  # For low contrast images
-        else:
-            best_channel = channels['background_removed']  # For normal contrast images
-    else:
-        best_channel = channels['enhanced_gray']  # Default
-    
-    return best_channel, channels
-
-
-def adaptive_preprocess(image: np.ndarray) -> np.ndarray:
-    """
-    Smart preprocessing that adapts to image characteristics
-    
-    Args:
-        image: Input color image
-    
-    Returns:
-        Preprocessed grayscale image optimized for puzzle piece detection
-    """
-    # Analyze image properties
-    analysis = analyze_image(image)
-    
-    # Convert to grayscale if not already
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image.copy()
-    
-    # Apply appropriate blur based on noise level
-    blur_size = 5  # Default
-    if analysis['noise_level'] > 10:
-        blur_size = 7  # More aggressive blur for noisy images
-    elif analysis['noise_level'] < 5:
-        blur_size = 3  # Less aggressive blur for clean images
-    
-    blurred = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
-    
-    # Apply adaptive contrast enhancement
-    clip_limit = 2.0  # Default
-    
-    if analysis['contrast'] < 0.3:
-        clip_limit = 3.0  # Stronger enhancement for low contrast
-    elif analysis['contrast'] > 0.7:
-        clip_limit = 1.0  # Weaker enhancement for high contrast
-    
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-    enhanced = clahe.apply(blurred)
-    
-    # For very dark or uneven backgrounds, apply additional processing
-    if analysis['background_is_dark'] and analysis['contrast'] < 0.4:
-        # Apply morphological closing to reduce background texture
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        enhanced = cv2.morphologyEx(enhanced, cv2.MORPH_CLOSE, kernel)
-    
-    return enhanced
-
-
-def select_best_channel(channels: Dict[str, np.ndarray]) -> Tuple[np.ndarray, str]:
-    """
-    Select the best channel for puzzle piece detection from multiple channels
-    
-    Args:
-        channels: Dictionary of processed image channels
-        
-    Returns:
-        Tuple of (best channel image, channel name)
-    """
-    # Score each channel based on metrics relevant to puzzle piece detection
-    scores = {}
-    
-    for name, channel in channels.items():
-        # Skip non-grayscale channels (like color components)
-        if len(channel.shape) > 2:
-            continue
-        
-        # Calculate histogram
-        hist = cv2.calcHist([channel], [0], None, [256], [0, 256])
-        hist = hist.flatten() / hist.sum()  # Normalize
-        
-        # Calculate entropy (higher entropy = more information = better)
-        entropy = -np.sum(hist * np.log2(hist + 1e-10))
-        
-        # Calculate number of edges
-        edges = cv2.Canny(channel, 50, 150)
-        edge_count = np.count_nonzero(edges) / channel.size
-        
-        # Detect contours (more contours with reasonable areas = better)
-        contours, _ = cv2.findContours(
-            cv2.threshold(channel, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1],
-            cv2.RETR_EXTERNAL, 
-            cv2.CHAIN_APPROX_SIMPLE
-        )
-        
-        # Filter contours by area
-        reasonable_contours = sum(1 for c in contours if 1000 < cv2.contourArea(c) < channel.size / 10)
-        
-        # Calculate final score (custom weighted metric)
-        # We want high entropy, moderate edge count, and a reasonable number of contours
-        scores[name] = (
-            0.4 * entropy / 8.0 +  # Normalize by max possible 8-bit entropy
-            0.3 * min(edge_count * 100, 1.0) +  # Cap edge percentage contribution
-            0.3 * min(reasonable_contours / 30, 1.0)  # Cap contour contribution
-        )
-    
-    # Get the channel with the highest score
-    best_channel_name = max(scores, key=scores.get)
-    return channels[best_channel_name], best_channel_name
-
-
-def preprocess_image(image: np.ndarray, advanced: bool = True) -> np.ndarray:
-    """
-    Preprocess image for puzzle piece detection - enhanced version
-    
-    Args:
-        image: Input color image
-        advanced: Whether to use advanced multi-channel processing
-    
-    Returns:
-        Preprocessed grayscale image
-    """
-    if advanced:
-        # Use advanced preprocessing with multi-channel analysis
-        best_channel, _ = multi_channel_preprocess(image)
-        return best_channel
-    else:
-        # Use simpler adaptive preprocessing
-        return adaptive_preprocess(image)
-
-
-def find_optimal_threshold_parameters(preprocessed: np.ndarray) -> Dict[str, Any]:
-    """
-    Find optimal thresholding parameters for a preprocessed image
-    
-    Args:
-        preprocessed: Preprocessed grayscale image
-        
-    Returns:
-        Dictionary with optimal threshold parameters
-    """
-    # Image analysis
-    analysis = analyze_image(preprocessed)
-    
-    # Test various adaptive threshold parameters
-    block_sizes = [15, 25, 35, 45, 55]
-    c_values = [2, 5, 10, 15]
-    
-    best_score = -1
-    best_params = {'method': 'otsu', 'block_size': 35, 'c': 10}
-    
-    # Create Otsu threshold for comparison
-    _, otsu_binary = cv2.threshold(preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    otsu_score = evaluate_binary_image(otsu_binary)
-    
-    if otsu_score > best_score:
-        best_score = otsu_score
-        best_params = {'method': 'otsu'}
-    
-    # Test adaptive thresholds
-    for block_size in block_sizes:
-        for c in c_values:
-            adaptive_binary = cv2.adaptiveThreshold(
-                preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY, block_size, c
-            )
+        if hist[i] > hist[i-1] and hist[i] > hist[i+1] and hist[i] > 0.01:
+            peaks.append((i, hist[i]))
+        if hist[i] < hist[i-1] and hist[i] < hist[i+1] and hist[i] < 0.01:
+            valleys.append((i, hist[i]))
             
-            score = evaluate_binary_image(adaptive_binary)
-            
-            if score > best_score:
-                best_score = score
-                best_params = {'method': 'adaptive', 'block_size': block_size, 'c': c}
-    
-    # Also test hybrid approach for low contrast images
-    if analysis['contrast'] < 0.4:
-        # Create a hybrid binary image that combines Otsu and adaptive results
-        adaptive_binary = cv2.adaptiveThreshold(
-            preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 35, 10
-        )
+    # Estimation du bruit
+    # Méthode simple : écart-type du filtre laplacien sur une région lisse
+    # Trouver une région probablement lisse (faible variance locale)
+    noise_level = 0
+    try:
+        block_size = 16
+        h, w = gray.shape
+        best_std = float('inf')
+        for y in range(0, h - block_size, block_size):
+            for x in range(0, w - block_size, block_size):
+                block = gray[y:y+block_size, x:x+block_size]
+                std = np.std(block)
+                if std < best_std:
+                    best_std = std
         
-        hybrid_binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
-        hybrid_score = evaluate_binary_image(hybrid_binary)
-        
-        if hybrid_score > best_score:
-            best_score = hybrid_score
-            best_params = {'method': 'hybrid'}
+        noise_level = best_std
+    except:
+        # En cas d'erreur, utiliser une estimation de base
+        noise_level = quick_analysis['std'] * 0.1
     
-    return best_params
-
-
-def evaluate_binary_image(binary: np.ndarray) -> float:
-    """
-    Evaluate the quality of a binary image for puzzle piece detection
+    # Combiner les analyses
+    result = {
+        **quick_analysis,  # Inclure l'analyse rapide
+        'sharpness': laplacian_var,
+        'edge_density': edge_density,
+        'noise_level': noise_level,
+        'histogram_peaks': len(peaks),
+        'histogram_valleys': len(valleys),
+        'dominant_peaks': sorted(peaks, key=lambda x: x[1], reverse=True)[:3] if peaks else []
+    }
     
-    Args:
-        binary: Binary image
-        
-    Returns:
-        Quality score (higher is better)
-    """
-    # Find contours in the binary image
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # No contours is bad
-    if not contours:
-        return 0.0
-    
-    # Calculate contour metrics
-    areas = [cv2.contourArea(c) for c in contours]
-    perimeters = [cv2.arcLength(c, True) for c in contours]
-    
-    # Filter out tiny contours
-    valid_contours = [(a, p) for a, p in zip(areas, perimeters) if a > 1000]
-    
-    if not valid_contours:
-        return 0.0
-    
-    areas, perimeters = zip(*valid_contours)
-    
-    # Calculate statistics
-    mean_area = np.mean(areas)
-    std_area = np.std(areas)
-    compactness = [p**2 / (4 * np.pi * a) if a > 0 else 0 for a, p in zip(areas, perimeters)]
-    
-    # Calculate score components
-    
-    # 1. Number of contours: We want a reasonable number (neither too few nor too many)
-    # Assuming 20-30 is a good range for puzzle pieces
-    count_score = min(len(valid_contours) / 25.0, 1.0)
-    
-    # 2. Area consistency: Lower standard deviation relative to mean is better
-    # (puzzle pieces tend to have similar sizes)
-    area_consistency = 1.0 - min(std_area / (mean_area + 1e-5), 1.0)
-    
-    # 3. Shape complexity: Puzzle pieces should have complex shapes (not too circular)
-    # Average compactness around 2-3 is typical for puzzle pieces
-    shape_score = min(np.mean(compactness) / 2.5, 1.0)
-    
-    # Weight the components (customize weights as needed)
-    final_score = (
-        0.4 * count_score +
-        0.4 * area_consistency +
-        0.2 * shape_score
+    # Détecter s'il s'agit d'une image de pièces de puzzle typique
+    # (fond sombre, objets clairs bien séparés)
+    result['is_typical_puzzle_image'] = (
+        result['is_dark_background'] and 
+        edge_density > 0.01 and edge_density < 0.1 and 
+        len(peaks) >= 2
     )
-    
-    return final_score
-
-
-def adaptive_threshold(image: np.ndarray, 
-                      block_size: int = 35, 
-                      c: int = 10,
-                      find_optimal: bool = True,
-                      invert: bool = False) -> np.ndarray:
-    """
-    Apply adaptive thresholding with parameter optimization
-    
-    Args:
-        image: Input grayscale image
-        block_size: Size of pixel neighborhood for thresholding (odd number)
-        c: Constant subtracted from mean
-        find_optimal: Whether to find optimal parameters automatically
-        invert: Whether to invert the threshold result
-    
-    Returns:
-        Binary image
-    """
-    if find_optimal:
-        # Find the best parameters for this specific image
-        params = find_optimal_threshold_parameters(image)
-        
-        if params['method'] == 'otsu':
-            _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        elif params['method'] == 'adaptive':
-            binary = cv2.adaptiveThreshold(
-                image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY, params['block_size'], params['c']
-            )
-        elif params['method'] == 'hybrid':
-            # Hybrid method: combine Otsu and adaptive thresholds
-            _, otsu_binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            adaptive_binary = cv2.adaptiveThreshold(
-                image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY, 35, 10
-            )
-            binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
-    else:
-        # Use provided parameters
-        binary = cv2.adaptiveThreshold(
-            image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY_INV if invert else cv2.THRESH_BINARY, 
-            block_size, c
-        )
-    
-    # Invert if needed
-    if invert and find_optimal:
-        binary = cv2.bitwise_not(binary)
-    
-    return binary
-
-
-def fuse_binary_images(binaries: List[np.ndarray], method: str = 'weighted') -> np.ndarray:
-    """
-    Combine multiple binary images to create an improved result
-    
-    Args:
-        binaries: List of binary images
-        method: Fusion method ('weighted', 'union', or 'intersection')
-    
-    Returns:
-        Fused binary image
-    """
-    if not binaries:
-        return np.zeros((100, 100), dtype=np.uint8)
-    
-    if len(binaries) == 1:
-        return binaries[0]
-    
-    # Ensure all images have the same dimensions
-    shape = binaries[0].shape
-    resized_binaries = [cv2.resize(img, (shape[1], shape[0])) for img in binaries]
-    
-    if method == 'union':
-        # Logical OR of all images
-        result = np.zeros_like(resized_binaries[0])
-        for binary in resized_binaries:
-            result = cv2.bitwise_or(result, binary)
-    
-    elif method == 'intersection':
-        # Logical AND of all images
-        result = np.ones_like(resized_binaries[0]) * 255
-        for binary in resized_binaries:
-            result = cv2.bitwise_and(result, binary)
-    
-    elif method == 'weighted':
-        # Convert binary images to float for weighted sum
-        float_images = [img.astype(np.float32) / 255.0 for img in resized_binaries]
-        
-        # Calculate quality scores for each binary image
-        scores = [evaluate_binary_image(binary) for binary in resized_binaries]
-        total_score = sum(scores) + 1e-10  # Avoid division by zero
-        
-        # Normalize scores to create weights
-        weights = [score / total_score for score in scores]
-        
-        # Apply weighted sum
-        weighted_sum = np.zeros_like(float_images[0])
-        for img, weight in zip(float_images, weights):
-            weighted_sum += img * weight
-        
-        # Threshold to get final binary image
-        result = (weighted_sum > 0.5).astype(np.uint8) * 255
-    
-    else:
-        # Default to union
-        result = np.zeros_like(resized_binaries[0])
-        for binary in resized_binaries:
-            result = cv2.bitwise_or(result, binary)
     
     return result
 
 
-def apply_morphology(image: np.ndarray, 
-                    operation: int = cv2.MORPH_CLOSE, 
-                    kernel_size: int = 5,
-                    iterations: int = 1,
-                    kernel_shape: int = cv2.MORPH_ELLIPSE) -> np.ndarray:
+def quick_analyze_image(image: np.ndarray) -> Dict[str, Any]:
     """
-    Apply morphological operations to an image with enhanced options
+    Analyse rapide des caractéristiques de l'image pour la segmentation.
     
     Args:
-        image: Binary input image
-        operation: Morphological operation (cv2.MORPH_*)
-        kernel_size: Size of the structuring element
-        iterations: Number of times to apply the operation
-        kernel_shape: Shape of the kernel (cv2.MORPH_RECT, cv2.MORPH_ELLIPSE, cv2.MORPH_CROSS)
-    
-    Returns:
-        Processed binary image
-    """
-    kernel = cv2.getStructuringElement(kernel_shape, (kernel_size, kernel_size))
-    return cv2.morphologyEx(image, operation, kernel, iterations=iterations)
-
-
-def detect_edges(image: np.ndarray, 
-                low_threshold: int = 50, 
-                high_threshold: int = 150,
-                use_auto_thresholds: bool = True) -> np.ndarray:
-    """
-    Detect edges in an image using Canny edge detector with adaptive thresholds
-    
-    Args:
-        image: Input grayscale image
-        low_threshold: Lower threshold for hysteresis
-        high_threshold: Upper threshold for hysteresis
-        use_auto_thresholds: Whether to automatically determine optimal thresholds
-    
-    Returns:
-        Binary edge image
-    """
-    if use_auto_thresholds:
-        # Calculate the median of the image
-        v = np.median(image)
+        image: Image d'entrée
         
-        # Use median-based thresholds (Canny's recommended approach)
-        low_threshold = int(max(0, (1.0 - 0.33) * v))
-        high_threshold = int(min(255, (1.0 + 0.33) * v))
-    
-    return cv2.Canny(image, low_threshold, high_threshold)
-
-
-def create_blank_image(shape: Tuple[int, int], 
-                       color: Tuple[int, int, int] = (0, 0, 0)) -> np.ndarray:
+    Returns:
+        Dictionnaire avec les caractéristiques de base
     """
-    Create a blank image with specified shape and color
+    # Convertir en niveaux de gris pour l'analyse rapide
+    gray = fast_grayscale(image)
+    
+    # Calcul des métriques rapides
+    mean_val = np.mean(gray)
+    std_val = np.std(gray)
+    
+    # Détection rapide du type d'arrière-plan
+    dark_ratio = np.sum(gray < 50) / gray.size
+    is_dark_background = dark_ratio > 0.3
+    
+    # Calcul simplifié du contraste
+    p5 = np.percentile(gray, 5)
+    p95 = np.percentile(gray, 95)
+    contrast = (p95 - p5) / 255.0
+    
+    # Création d'une version sous-échantillonnée pour l'histogramme (plus rapide)
+    small_gray = gray[::4, ::4]
+    hist = cv2.calcHist([small_gray], [0], None, [64], [0, 256])
+    hist = hist.flatten() / hist.sum()
+    
+    # Détermination rapide si l'histogramme est bimodal
+    hist_peaks = []
+    for i in range(1, 63):
+        if hist[i] > hist[i-1] and hist[i] > hist[i+1] and hist[i] > 0.05:
+            hist_peaks.append((i * 4, hist[i]))
+    
+    is_bimodal = len(hist_peaks) >= 2
+    
+    return {
+        'mean': mean_val,
+        'std': std_val,
+        'contrast': contrast,
+        'is_dark_background': is_dark_background,
+        'is_bimodal': is_bimodal,
+        'background_value': np.mean(gray[gray < 50]) if is_dark_background else np.mean(gray[gray > 200])
+    }
+
+
+def fast_enhance_contrast(image: np.ndarray) -> np.ndarray:
+    """
+    Amélioration rapide du contraste pour la segmentation.
     
     Args:
-        shape: (height, width) tuple
-        color: BGR color tuple
-    
+        image: Image en niveaux de gris
+        
     Returns:
-        Blank image
+        Image avec contraste amélioré
     """
-    if len(shape) == 2:
-        height, width = shape
-        channels = 3  # Default to BGR
+    # Analyse rapide
+    analysis = quick_analyze_image(image)
+    
+    # Utilisation de CLAHE avec des paramètres adaptés
+    clip_limit = 3.0 if analysis['contrast'] < 0.3 else 2.0
+    
+    # Application de CLAHE
+    gray = fast_grayscale(image)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
+    return clahe.apply(gray)
+
+
+def preprocess_image(image: np.ndarray, strategy: str = 'auto', expected_pieces: Optional[int] = None, 
+                   params: Optional[Dict] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Prétraite une image pour la détection des pièces de puzzle en utilisant différentes stratégies.
+    
+    Args:
+        image: Image d'entrée
+        strategy: Stratégie de prétraitement ('fast', 'adaptive', 'standard', ou 'auto')
+        expected_pieces: Nombre attendu de pièces (pour optimisation)
+        params: Paramètres spécifiques à la stratégie
+        
+    Returns:
+        Tuple de (image prétraitée, image binaire, image des bords)
+    """
+    # Valeurs par défaut pour les paramètres
+    if params is None:
+        params = {}
+        
+    # Déterminer automatiquement la meilleure stratégie si 'auto'
+    if strategy == 'auto':
+        strategy = _select_preprocessing_strategy(image)
+    
+    # Appeler la fonction de prétraitement appropriée
+    if strategy == 'fast':
+        return _preprocess_fast(image, params)
+    elif strategy == 'adaptive':
+        return _preprocess_adaptive(image, expected_pieces, params)
+    else:  # standard
+        return _preprocess_standard(image, params)
+
+
+def _select_preprocessing_strategy(image: np.ndarray) -> str:
+    """
+    Sélectionne automatiquement la meilleure stratégie de prétraitement.
+    
+    Args:
+        image: Image d'entrée
+        
+    Returns:
+        Stratégie de prétraitement ('fast', 'adaptive', ou 'standard')
+    """
+    # Analyse rapide
+    analysis = quick_analyze_image(image)
+    
+    # Sélection basée sur les caractéristiques de l'image
+    if analysis['contrast'] > 0.6 and analysis['is_dark_background']:
+        return 'fast'  # Bon contraste et fond sombre -> stratégie rapide
+    elif analysis['contrast'] < 0.4 or analysis['is_bimodal']:
+        return 'adaptive'  # Faible contraste ou histogramme complexe -> adaptatif
     else:
-        height, width, channels = shape
+        return 'standard'  # Cas par défaut -> standard
+
+
+def _preprocess_fast(image: np.ndarray, params: Optional[Dict] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Prétraitement rapide d'une image pour la détection des pièces.
     
-    if channels == 1:
-        return np.ones((height, width), dtype=np.uint8) * color[0]
+    Args:
+        image: Image couleur d'entrée
+        params: Paramètres optionnels
+    
+    Returns:
+        Tuple de (image prétraitée, image binaire, image des bords)
+    """
+    if params is None:
+        params = {}
+    
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
+    
+    # Flou gaussien pour réduire le bruit
+    blur_size = params.get('blur_size', 5)
+    blurred = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
+    
+    # Analyse rapide pour déterminer le type d'image
+    analysis = quick_analyze_image(image)
+    
+    # Choisir la méthode de seuillage en fonction des caractéristiques de l'image
+    if analysis['is_dark_background']:
+        # Pour fond sombre - méthode directe rapide
+        threshold_value = min(100, analysis['background_value'] + 30)
+        _, binary = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY)
     else:
-        return np.ones((height, width, channels), dtype=np.uint8) * color
+        # Pour d'autres types d'images, utiliser Otsu
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Opérations morphologiques pour nettoyer l'image binaire
+    morph_kernel_size = params.get('morph_kernel_size', 5)
+    morph_iterations = params.get('morph_iterations', 1)
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_kernel_size, morph_kernel_size))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=morph_iterations)
+    
+    # Détection des bords - optionnelle, pour compatibilité
+    edges = cv2.Canny(cleaned, 50, 150)
+    
+    return blurred, cleaned, edges
 
 
-def multi_scale_edge_detection(image: np.ndarray) -> np.ndarray:
+def _preprocess_adaptive(image: np.ndarray, expected_pieces: Optional[int] = None, 
+                       params: Optional[Dict] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Perform edge detection at multiple scales and combine results
+    Prétraitement adaptatif avancé avec analyse multi-canal.
     
     Args:
-        image: Input grayscale image
+        image: Image couleur d'entrée
+        expected_pieces: Nombre attendu de pièces (pour optimisation)
+        params: Paramètres optionnels
     
     Returns:
-        Binary edge image
+        Tuple de (image prétraitée, image binaire, image des bords)
     """
-    # Apply Canny edge detection at different scales
-    canny_default = cv2.Canny(image, 50, 150)
+    if params is None:
+        params = {}
     
-    # Downscale by 2x, detect edges, then upscale
-    h, w = image.shape[:2]
-    small_image = cv2.resize(image, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
-    canny_small = cv2.Canny(small_image, 50, 150)
-    canny_small = cv2.resize(canny_small, (w, h), interpolation=cv2.INTER_NEAREST)
+    # Analyse de l'image
+    analysis = analyze_image(image)
     
-    # Combine edge maps (union)
-    return cv2.bitwise_or(canny_default, canny_small)
+    # Utilisation du prétraitement multi-canal pour créer la meilleure représentation en niveaux de gris
+    best_preprocessed, all_channels = multi_channel_preprocess(image)
+    
+    # Trouver les paramètres de seuillage optimaux
+    threshold_params = find_optimal_threshold_parameters(best_preprocessed)
+    
+    # Appliquer le seuillage optimal
+    if threshold_params['method'] == 'otsu':
+        _, binary = cv2.threshold(best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    elif threshold_params['method'] == 'adaptive':
+        binary = cv2.adaptiveThreshold(
+            best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, threshold_params['block_size'], threshold_params['c']
+        )
+    elif threshold_params['method'] == 'hybrid':
+        # Approche hybride
+        _, otsu_binary = cv2.threshold(best_preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        adaptive_binary = cv2.adaptiveThreshold(
+            best_preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 35, 10
+        )
+        binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
+    
+    # Opérations morphologiques pour nettoyer l'image binaire
+    kernel_size = params.get('morph_kernel_size', 5)
+    iterations = params.get('morph_iterations', 2)
+    
+    cleaned = apply_morphology(
+        binary, 
+        operation=cv2.MORPH_CLOSE, 
+        kernel_size=kernel_size,
+        iterations=iterations
+    )
+    
+    # Détection des bords - principalement pour la visualisation
+    edges = cv2.Canny(best_preprocessed, 50, 150)
+    
+    return best_preprocessed, cleaned, edges
 
 
-def compare_threshold_methods(preprocessed_image: np.ndarray, 
-                          adaptive_block_size: int = 35, 
-                          adaptive_c: int = 10,
-                          area_threshold: float = 200) -> Tuple[np.ndarray, str, Dict[str, Any]]:
+def _preprocess_standard(image: np.ndarray, params: Optional[Dict] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compare Otsu and adaptive thresholding methods and return the best one
+    Prétraitement standard pour la détection des pièces de puzzle.
     
     Args:
-        preprocessed_image: Preprocessed grayscale image
-        adaptive_block_size: Block size for adaptive thresholding
-        adaptive_c: Constant for adaptive thresholding
-        area_threshold: Minimum area to consider a contour significant
+        image: Image couleur d'entrée
+        params: Paramètres optionnels
     
     Returns:
-        Tuple of (best binary image, method name, metrics dictionary)
+        Tuple de (image prétraitée, image binaire, image des bords)
     """
-    # Apply Otsu thresholding
-    _, otsu_binary = cv2.threshold(preprocessed_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if params is None:
+        params = {}
     
-    # Apply adaptive thresholding
+    # Conversion en niveaux de gris
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image.copy()
+    
+    # Réduction du bruit
+    blur_size = params.get('blur_size', 5)
+    blurred = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
+    
+    # Amélioration du contraste
+    enhanced = fast_enhance_contrast(blurred)
+    
+    # Seuillage automatique
+    use_auto_threshold = params.get('use_auto_threshold', True)
+    
+    if use_auto_threshold:
+        binary, method, _ = compare_threshold_methods(
+            enhanced,
+            params.get('adaptive_block_size', 35),
+            params.get('adaptive_c', 10)
+        )
+    else:
+        # Par défaut: utiliser Otsu
+        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Opérations morphologiques pour nettoyer l'image binaire
+    kernel_size = params.get('morph_kernel_size', 3)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    
+    # Détection des bords
+    edges = cv2.Canny(cleaned, 30, 200)
+    
+    return enhanced, cleaned, edges
+
+
+def multi_channel_preprocess(image: np.ndarray) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """
+    Prétraitement multi-canal pour extraire la meilleure représentation de l'image.
+    Version corrigée pour éviter l'erreur 'dictionary changed size during iteration'.
+    
+    Args:
+        image: Image couleur d'entrée
+        
+    Returns:
+        Tuple de (meilleure image prétraitée, dictionnaire des canaux)
+    """
+    # Vérifier si l'image est déjà en niveaux de gris
+    if len(image.shape) == 2:
+        enhanced = fast_enhance_contrast(image)
+        return enhanced, {'gray': enhanced}
+    
+    # Extraire différents canaux et espaces de couleur
+    channels = {}
+    
+    # Canaux BGR originaux
+    b, g, r = cv2.split(image)
+    channels['blue'] = b
+    channels['green'] = g
+    channels['red'] = r
+    
+    # Espace HSV
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    channels['hue'] = h
+    channels['saturation'] = s
+    channels['value'] = v
+    
+    # Espace LAB
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    channels['lightness'] = l
+    channels['a'] = a
+    channels['b'] = b
+    
+    # Grayscale standard
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    channels['gray'] = gray
+    
+    # Créer un nouveau dictionnaire pour les versions améliorées
+    enhanced_channels = {}
+    scores = {}
+    
+    # Traiter chaque canal original sans modifier le dictionnaire pendant l'itération
+    for name, channel in channels.items():
+        # Rehausser le contraste
+        enhanced = fast_enhance_contrast(channel)
+        enhanced_key = name + '_enhanced'
+        enhanced_channels[enhanced_key] = enhanced
+        
+        # Calculer un score basé sur le contraste et la clarté des bords
+        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        edges = cv2.Canny(enhanced, 50, 150)
+        
+        # Score: mesure la qualité de la segmentation potentielle
+        edge_count = np.count_nonzero(edges)
+        edge_score = edge_count / edges.size
+        contrast_score = quick_analyze_image(enhanced)['contrast']
+        
+        scores[enhanced_key] = edge_score * 0.6 + contrast_score * 0.4
+    
+    # Fusionner les dictionnaires de canaux originaux et améliorés
+    all_channels = {**channels, **enhanced_channels}
+    
+    # Sélectionner le meilleur canal
+    best_channel_name = max(scores, key=scores.get)
+    best_channel = enhanced_channels[best_channel_name]
+    
+    return best_channel, all_channels
+
+
+def find_optimal_threshold_parameters(gray_image: np.ndarray) -> Dict[str, Any]:
+    """
+    Trouve les paramètres de seuillage optimaux pour une image.
+    
+    Args:
+        gray_image: Image en niveaux de gris
+        
+    Returns:
+        Dictionnaire des paramètres optimaux
+    """
+    # Tester différentes méthodes de seuillage
+    # 1. Otsu
+    _, otsu_binary = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_score = evaluate_segmentation(otsu_binary)
+    
+    # 2. Seuillage adaptatif avec différentes tailles de bloc
+    best_adaptive_score = 0
+    best_block_size = 35
+    best_c = 10
+    
+    # Tester quelques paramètres clés rapidement plutôt que toutes les combinaisons
+    for block_size in [25, 35, 51, 75]:
+        for c in [5, 10, 15]:
+            adaptive_binary = cv2.adaptiveThreshold(
+                gray_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                cv2.THRESH_BINARY, block_size, c
+            )
+            score = evaluate_segmentation(adaptive_binary)
+            
+            if score > best_adaptive_score:
+                best_adaptive_score = score
+                best_block_size = block_size
+                best_c = c
+    
+    # 3. Approche hybride
     adaptive_binary = cv2.adaptiveThreshold(
-        preprocessed_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, adaptive_block_size, adaptive_c
+        gray_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, best_block_size, best_c
     )
-    
-    # Create a hybrid (combination) of both methods
     hybrid_binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
+    hybrid_score = evaluate_segmentation(hybrid_binary)
     
-    # Apply triangle thresholding (often good for bimodal histograms like puzzle pieces)
-    _, triangle_binary = cv2.threshold(
-        preprocessed_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_TRIANGLE
-    )
-    
-    # Evaluate each method
-    methods = {
-        'otsu': otsu_binary,
-        'adaptive': adaptive_binary,
-        'hybrid': hybrid_binary,
-        'triangle': triangle_binary
+    # Sélectionner la meilleure méthode
+    scores = {
+        'otsu': otsu_score,
+        'adaptive': best_adaptive_score,
+        'hybrid': hybrid_score
     }
     
-    results = {}
-    best_score = -1
-    best_method = 'otsu'  # Default
+    best_method = max(scores, key=scores.get)
     
-    for method_name, binary in methods.items():
-        score = evaluate_binary_image(binary)
-        results[method_name] = {
-            'score': score
+    # Retourner les paramètres optimaux
+    if best_method == 'otsu':
+        return {'method': 'otsu'}
+    elif best_method == 'adaptive':
+        return {
+            'method': 'adaptive',
+            'block_size': best_block_size,
+            'c': best_c
         }
-        
-        if score > best_score:
-            best_score = score
-            best_method = method_name
+    else:  # hybrid
+        return {
+            'method': 'hybrid',
+            'block_size': best_block_size,
+            'c': best_c
+        }
+
+
+def compare_threshold_methods(gray_image: np.ndarray, adaptive_block_size: int = 35, 
+                            adaptive_c: int = 10) -> Tuple[np.ndarray, str, float]:
+    """
+    Compare différentes méthodes de seuillage et retourne la meilleure.
     
-    return methods[best_method], best_method, results
+    Args:
+        gray_image: Image en niveaux de gris
+        adaptive_block_size: Taille de bloc pour le seuillage adaptatif
+        adaptive_c: Constante pour le seuillage adaptatif
+    
+    Returns:
+        Tuple de (image binaire, nom de la méthode, score)
+    """
+    # 1. Otsu
+    _, otsu_binary = cv2.threshold(gray_image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_score = evaluate_segmentation(otsu_binary)
+    
+    # 2. Seuillage adaptatif
+    adaptive_binary = cv2.adaptiveThreshold(
+        gray_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, adaptive_block_size, adaptive_c
+    )
+    adaptive_score = evaluate_segmentation(adaptive_binary)
+    
+    # 3. Approche hybride
+    hybrid_binary = cv2.bitwise_or(otsu_binary, adaptive_binary)
+    hybrid_score = evaluate_segmentation(hybrid_binary)
+    
+    # Sélectionner la meilleure méthode
+    methods = {
+        'otsu': (otsu_binary, otsu_score),
+        'adaptive': (adaptive_binary, adaptive_score),
+        'hybrid': (hybrid_binary, hybrid_score)
+    }
+    
+    best_method = max(methods, key=lambda k: methods[k][1])
+    best_binary, best_score = methods[best_method]
+    
+    return best_binary, best_method, best_score
+
+
+def apply_morphology(binary: np.ndarray, operation: int = cv2.MORPH_CLOSE, 
+                   kernel_size: int = 5, iterations: int = 1) -> np.ndarray:
+    """
+    Applique une opération morphologique à une image binaire.
+    
+    Args:
+        binary: Image binaire d'entrée
+        operation: Opération morphologique (cv2.MORPH_*)
+        kernel_size: Taille du noyau
+        iterations: Nombre d'itérations
+    
+    Returns:
+        Image binaire traitée
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    return cv2.morphologyEx(binary, operation, kernel, iterations=iterations)
+
+
+def detect_edges(image: np.ndarray, threshold1: int = 50, threshold2: int = 150) -> np.ndarray:
+    """
+    Détecte les bords dans une image.
+    
+    Args:
+        image: Image en niveaux de gris
+        threshold1: Premier seuil pour l'algorithme de Canny
+        threshold2: Second seuil pour l'algorithme de Canny
+    
+    Returns:
+        Image des bords détectés
+    """
+    # Assurer que l'image est en niveaux de gris
+    gray = fast_grayscale(image)
+    return cv2.Canny(gray, threshold1, threshold2)
+
+
+def optimize_for_segmentation(image: np.ndarray, downscale_factor: float = 1.0) -> np.ndarray:
+    """
+    Prétraitement optimisé pour la segmentation des pièces de puzzle.
+    
+    Args:
+        image: Image d'entrée
+        downscale_factor: Facteur de réduction d'échelle pour accélérer le traitement
+        
+    Returns:
+        Image prétraitée pour segmentation
+    """
+    # Redimensionnement pour accélérer le traitement si nécessaire
+    if downscale_factor != 1.0 and downscale_factor > 0:
+        processed = resize_image(image, scale=downscale_factor)
+    else:
+        processed = image.copy()
+    
+    # Conversion en niveaux de gris rapide
+    gray = fast_grayscale(processed)
+    
+    # Analyse rapide
+    analysis = quick_analyze_image(gray)
+    
+    # Appliquer une réduction de bruit
+    if analysis['std'] > 15:  # Image bruitée
+        blur_size = 5
+    else:
+        blur_size = 3
+        
+    blurred = cv2.GaussianBlur(gray, (blur_size, blur_size), 0)
+    
+    # Amélioration du contraste seulement si nécessaire
+    if analysis['contrast'] < 0.5:
+        # CLAHE est coûteux, ne l'utiliser que si nécessaire
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(blurred)
+    else:
+        enhanced = blurred
+        
+    # Optimisation pour les images à fond sombre (cas typique des puzzles)
+    if analysis['is_dark_background']:
+        # Prétraitement optimisé pour fond sombre
+        # Suppression rapide du fond
+        threshold_value = min(120, analysis['background_value'] + 30)
+        _, mask = cv2.threshold(enhanced, threshold_value, 255, cv2.THRESH_BINARY)
+        return mask
+    else:
+        # Pour les autres types d'images, utiliser Otsu (rapide et efficace)
+        _, binary = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return binary
+
+
+def adaptive_preprocess(image: np.ndarray) -> np.ndarray:
+    """
+    Prétraitement adaptatif qui sélectionne la meilleure méthode pour chaque image.
+    
+    Args:
+        image: Image d'entrée
+        
+    Returns:
+        Image binaire prétraitée
+    """
+    # Analyse de l'image pour déterminer ses caractéristiques
+    analysis = analyze_image(image)
+    
+    # Sélection de la méthode appropriée en fonction des caractéristiques
+    if analysis['is_dark_background'] and analysis['contrast'] > 0.4:
+        # Fond sombre avec bon contraste - méthode simple et rapide
+        gray = fast_grayscale(image)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        threshold_value = min(100, analysis['background_value'] + 30)
+        _, binary = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY)
+    elif analysis['contrast'] < 0.3:
+        # Faible contraste - amélioration et seuillage adaptatif
+        gray = fast_grayscale(image)
+        enhanced = fast_enhance_contrast(gray)
+        binary = cv2.adaptiveThreshold(
+            enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY, 35, 10
+        )
+    else:
+        # Cas général - Otsu
+        gray = fast_grayscale(image)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Nettoyage morphologique
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    
+    return cleaned
+
+
+def fast_adaptive_threshold(image: np.ndarray) -> np.ndarray:
+    """
+    Seuillage adaptatif optimisé pour la performance.
+    
+    Args:
+        image: Image en niveaux de gris
+        
+    Returns:
+        Image binaire
+    """
+    # Analyse rapide
+    analysis = quick_analyze_image(image)
+    
+    # Pour les images à faible contraste, un seuillage adaptatif est meilleur
+    if analysis['contrast'] < 0.4:
+        # Taillez les paramètres pour la vitesse - bloc plus grand est plus rapide
+        block_size = 35  # Une valeur plus élevée accélère le traitement
+        c = 10
+        return cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                   cv2.THRESH_BINARY, block_size, c)
+    else:
+        # Otsu est beaucoup plus rapide et fonctionne bien avec un bon contraste
+        _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return binary
+
+def adaptive_threshold(image: np.ndarray, block_size: int = 35, c: int = 10) -> np.ndarray:
+    """
+    Applique un seuillage adaptatif à une image en niveaux de gris.
+    
+    Args:
+        image: Image en niveaux de gris
+        block_size: Taille du bloc pour le calcul du seuil adaptatif
+        c: Constante soustraite de la moyenne
+        
+    Returns:
+        Image binaire seuillée
+    """
+    # S'assurer que block_size est impair
+    if block_size % 2 == 0:
+        block_size += 1
+        
+    return cv2.adaptiveThreshold(
+        image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, block_size, c
+    )
+
+def clean_binary_image(binary: np.ndarray, min_size: int = 500) -> np.ndarray:
+    """
+    Nettoie une image binaire en éliminant les petits artefacts.
+    Optimisé pour la performance.
+    
+    Args:
+        binary: Image binaire
+        min_size: Taille minimale des composantes à conserver
+        
+    Returns:
+        Image binaire nettoyée
+    """
+    # Application d'une opération morphologique pour fermer les petits trous
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    cleaned = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    
+    # Suppression des petits artefacts - optimisé avec l'analyse de composantes connectées
+    # Cette approche est beaucoup plus rapide que de traiter chaque contour individuellement
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(cleaned, connectivity=8)
+    
+    # Créer un masque pour les composantes valides
+    mask = np.zeros_like(cleaned)
+    
+    # Optimisation: utiliser un accès direct aux statistiques et une opération vectorisée
+    # pour créer le masque des composantes valides (sauf l'arrière-plan à l'indice 0)
+    valid_components = np.where(stats[1:, cv2.CC_STAT_AREA] >= min_size)[0] + 1
+    
+    # Créer le masque avec une seule boucle sur les composantes valides
+    for label in valid_components:
+        mask[labels == label] = 255
+    
+    return mask
+
+
+def detect_puzzle_pieces(image: np.ndarray, expected_min_size: int = 1000) -> Tuple[np.ndarray, List[np.ndarray]]:
+    """
+    Pipeline optimisé en performance pour détecter les pièces de puzzle.
+    
+    Args:
+        image: Image d'entrée
+        expected_min_size: Taille minimale attendue pour une pièce de puzzle
+        
+    Returns:
+        Tuple contenant (image binaire des pièces, liste des contours)
+    """
+    # 1. Prétraitement optimisé
+    # Utiliser une échelle réduite pour l'analyse rapide, si l'image est grande
+    h, w = image.shape[:2]
+    if max(h, w) > 2000:
+        analysis_scale = 0.5
+    else:
+        analysis_scale = 1.0
+        
+    # Analyse rapide
+    small_image = resize_image(image, scale=analysis_scale) if analysis_scale < 1.0 else image
+    analysis = quick_analyze_image(small_image)
+    
+    # 2. Pipeline de traitement selon le type d'image
+    if analysis['is_dark_background']:
+        # Optimisation pour fond sombre (cas typique des puzzles)
+        gray = fast_grayscale(image)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Seuillage simple et rapide pour fond sombre
+        threshold_value = min(100, analysis['background_value'] + 25)
+        _, binary = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY)
+    else:
+        # Pour d'autres cas, utiliser le pipeline général mais optimisé
+        preprocessed = optimize_for_segmentation(image)
+        binary = fast_adaptive_threshold(preprocessed)
+    
+    # 3. Nettoyage et extraction des contours
+    cleaned = clean_binary_image(binary, min_size=expected_min_size)
+    
+    # Détection des contours - utilisation de CHAIN_APPROX_SIMPLE pour la performance
+    contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filtrage direct par aire
+    filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= expected_min_size]
+    
+    return cleaned, filtered_contours
+
+
+def create_piece_mask(image: np.ndarray, contour: np.ndarray) -> np.ndarray:
+    """
+    Crée un masque pour une pièce de puzzle à partir de son contour.
+    Optimisé pour la performance.
+    
+    Args:
+        image: Image originale
+        contour: Contour de la pièce
+        
+    Returns:
+        Masque binaire de la pièce
+    """
+    # Création d'un masque rapide
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    cv2.drawContours(mask, [contour], 0, 255, -1)
+    return mask
+
+
+def extract_piece_image(image: np.ndarray, contour: np.ndarray, padding: int = 5) -> np.ndarray:
+    """
+    Extrait l'image d'une pièce de puzzle avec un fond propre.
+    Optimisé pour la performance.
+    
+    Args:
+        image: Image originale
+        contour: Contour de la pièce
+        padding: Marge autour de la pièce
+        
+    Returns:
+        Image de la pièce sur fond blanc
+    """
+    # Obtenir le rectangle englobant avec marge
+    x, y, w, h = cv2.boundingRect(contour)
+    x_min = max(0, x - padding)
+    y_min = max(0, y - padding)
+    x_max = min(image.shape[1], x + w + padding)
+    y_max = min(image.shape[0], y + h + padding)
+    
+    # Créer un masque
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    cv2.drawContours(mask, [contour], 0, 255, -1)
+    mask_roi = mask[y_min:y_max, x_min:x_max]
+    
+    # Extraire la région d'intérêt
+    roi = image[y_min:y_max, x_min:x_max]
+    
+    # Création optimisée de l'image avec fond blanc
+    result = np.ones_like(roi) * 255
+    mask_3ch = cv2.merge([mask_roi, mask_roi, mask_roi]) if len(image.shape) == 3 else mask_roi
+    
+    # Application du masque (opération vectorisée pour la vitesse)
+    result = np.where(mask_3ch > 0, roi, result)
+    
+    return result
+
+
+def evaluate_segmentation(binary: np.ndarray, min_area: int = 1000) -> float:
+    """
+    Évalue rapidement la qualité d'une segmentation pour les pièces de puzzle.
+    
+    Args:
+        binary: Image binaire segmentée
+        min_area: Aire minimale pour les pièces valides
+        
+    Returns:
+        Score de qualité (0-1)
+    """
+    # Détection rapide des contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Pas de contours est mauvais
+    if not contours:
+        return 0.0
+    
+    # Calcul vectorisé des aires de tous les contours
+    areas = np.array([cv2.contourArea(cnt) for cnt in contours])
+    
+    # Filtrage vectorisé par aire
+    valid_mask = areas >= min_area
+    valid_areas = areas[valid_mask]
+    
+    # Pas de contours valides est mauvais
+    if len(valid_areas) == 0:
+        return 0.0
+    
+    # Métriques vectorisées pour la vitesse
+    count_score = min(len(valid_areas) / 30.0, 1.0)  # Idéalement pas trop de pièces
+    
+    # Cohérence des aires (les pièces de puzzle ont généralement des tailles similaires)
+    mean_area = np.mean(valid_areas)
+    std_area = np.std(valid_areas)
+    area_consistency = max(0, 1.0 - (std_area / (mean_area + 1e-5)) / 0.5)
+    
+    # Score combiné simplifié
+    score = 0.5 * count_score + 0.5 * area_consistency
+    
+    return score
+
+
+
+def find_best_threshold(preprocessed: np.ndarray) -> np.ndarray:
+    """
+    Trouve rapidement le meilleur seuillage pour la segmentation.
+    
+    Args:
+        preprocessed: Image prétraitée
+        
+    Returns:
+        Image binaire avec le meilleur seuillage
+    """
+    # Test rapide de deux méthodes principales
+    
+    # 1. Otsu (rapide)
+    _, otsu_binary = cv2.threshold(preprocessed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_score = evaluate_segmentation(otsu_binary)
+    
+    # 2. Seuillage adaptatif (un peu plus lent)
+    # Seulement si Otsu n'est pas satisfaisant
+    if otsu_score < 0.7:
+        adaptive_binary = cv2.adaptiveThreshold(preprocessed, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                            cv2.THRESH_BINARY, 35, 10)
+        adaptive_score = evaluate_segmentation(adaptive_binary)
+        
+        if adaptive_score > otsu_score:
+            return adaptive_binary
+    
+    return otsu_binary
