@@ -439,7 +439,7 @@ def create_segmentation_visualization(original_image: np.ndarray,
     )
 
 
-def generate_piece_gallery(pieces, rows: int = 4, cols: int = 5, 
+def generate_piece_gallery(pieces, rows: int = 5, cols: int = 6,
                           max_pieces: int = 20, thumbnail_size: int = 200) -> np.ndarray:
     """
     Génère une galerie d'images des pièces détectées.
