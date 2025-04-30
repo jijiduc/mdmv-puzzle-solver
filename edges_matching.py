@@ -182,6 +182,9 @@ def process_piece(piece_data, output_dirs):
     # Récupérer les chemins de sortie
     edges_dir, edge_types_dir, corners_dir, contours_dir = output_dirs
     
+    color_features_dir = os.path.join(os.path.dirname(edges_dir), "color_features")
+    os.makedirs(color_features_dir, exist_ok=True)
+    
     # Convertir les listes en tableaux NumPy
     piece_img = np.array(piece_data['img'], dtype=np.uint8)
     piece_mask = np.array(piece_data['mask'], dtype=np.uint8)
@@ -379,7 +382,7 @@ def process_piece(piece_data, output_dirs):
     for j, (x, y) in enumerate(corner_points):
         cv2.circle(corner_img, (int(x), int(y)), 5, (255, 0, 0), -1)
         cv2.putText(corner_img, str(j), (int(x)+5, int(y)+5), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     
     # Dessiner le centroïde
     cv2.circle(corner_img, centroid, 3, (0, 0, 255), -1)
@@ -421,6 +424,8 @@ def process_piece(piece_data, output_dirs):
     edges = []
     edge_types = []
     edge_deviations = []
+    edge_colors = []
+    color_vis_data = []
     
     for j in range(4):
         next_j = (j + 1) % 4
@@ -428,15 +433,22 @@ def process_piece(piece_data, output_dirs):
         
         if len(edge_points) > 0:
             edge_type, deviation = classify_edge(edge_points, corner_points[j], corner_points[next_j], centroid)
+            color_feature, vis_data = extract_edge_color_features(piece_img, edge_points, corner_points[j], corner_points[next_j], j)
         else:
             edge_type, deviation = "unknown", 0
+            color_feature = None
         
         edges.append(edge_points)
         edge_types.append(edge_type)
         edge_deviations.append(deviation)
+        edge_colors.append(color_feature)
+        color_vis_data.append(vis_data)
         
         # Créer image pour chaque bord
         if not DISABLE_DEBUG_FILES:
+            color_vis_path = os.path.join(color_features_dir, f"piece_{piece_index+1}_color_features.png")
+            create_color_feature_visualization(piece_img, color_vis_data, piece_index, color_vis_path)
+            
             os.makedirs(edges_dir, exist_ok=True)
             if len(edge_points) > 0:
                 # Calculer la boîte englobante
@@ -555,7 +567,8 @@ def process_piece(piece_data, output_dirs):
     return {
         'piece_idx': piece_index,
         'edge_types': edge_types,
-        'edge_deviations': edge_deviations
+        'edge_deviations': edge_deviations,
+        'edge_colors': edge_colors
     }
 
 def extract_edge_between_corners(corners, corner_idx1, corner_idx2, edge_coords, centroid):
@@ -812,6 +825,131 @@ def save_pieces(pieces, img, filled_mask, dirs):
         # Sauvegarder
         cv2.imwrite(os.path.join(dirs['pieces'], f"piece_{index+1}.png"), masked_piece)
         plt.imsave(os.path.join(dirs['transforms'], f"distance_transform_{index+1}.png"), dist_transform, cmap='gray')
+        
+def extract_edge_color_features(piece_img, edge_points, corner1, corner2, edge_index):
+    """Extract color features for an edge and return visualization data."""
+    if len(edge_points) == 0:
+        return None, None
+    
+    # Create a mask for sampling colors along the edge with a small margin
+    mask = np.zeros(piece_img.shape[:2], dtype=np.uint8)
+    
+    # Draw the edge points with a small buffer to capture edge colors
+    for x, y in edge_points:
+        if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1]:
+            cv2.circle(mask, (int(x), int(y)), 3, 255, -1)  # 3-pixel radius
+    
+    # Get the color samples from the masked region
+    # Important: Keep the BGR structure for calcHist
+    samples_bgr = piece_img[mask == 255]
+    
+    if len(samples_bgr) == 0:
+        return None, None
+    
+    # Convert to HSV after extracting the samples to preserve the 3-channel structure
+    samples_hsv = cv2.cvtColor(samples_bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    
+    # Calculate mean and standard deviation
+    mean_hsv = np.mean(samples_hsv, axis=0).tolist()
+    std_hsv = np.std(samples_hsv, axis=0).tolist()
+    
+    # Calculate histograms for each channel separately
+    bins = 16
+    h_hist = np.histogram(samples_hsv[:, 0], bins=bins, range=(0, 180))[0]
+    s_hist = np.histogram(samples_hsv[:, 1], bins=bins, range=(0, 256))[0]
+    v_hist = np.histogram(samples_hsv[:, 2], bins=bins, range=(0, 256))[0]
+    
+    # Normalize the histograms
+    h_hist = h_hist.astype(np.float32) / np.sum(h_hist) if np.sum(h_hist) > 0 else h_hist
+    s_hist = s_hist.astype(np.float32) / np.sum(s_hist) if np.sum(s_hist) > 0 else s_hist
+    v_hist = v_hist.astype(np.float32) / np.sum(v_hist) if np.sum(v_hist) > 0 else v_hist
+    
+    # Create feature vector
+    color_feature = {
+        'h_hist': h_hist.tolist(),
+        's_hist': s_hist.tolist(),
+        'v_hist': v_hist.tolist(),
+        'mean_hsv': mean_hsv,
+        'std_hsv': std_hsv
+    }
+    
+    # Create visualization data to be used later
+    edge_img = cv2.bitwise_and(piece_img, piece_img, mask=mask)
+    vis_data = {
+        'edge_img': edge_img,
+        'h_hist': h_hist,
+        's_hist': s_hist,
+        'v_hist': v_hist,
+        'edge_index': edge_index
+    }
+    
+    return color_feature, vis_data
+
+def create_color_feature_visualization(piece_img, vis_data_list, piece_index, output_path):
+    """Create a visualization of color features for all edges of a piece."""
+    if not vis_data_list or all(v is None for v in vis_data_list):
+        # Create empty visualization if no data
+        vis_img = np.ones((400, 600, 3), dtype=np.uint8) * 255
+        cv2.putText(vis_img, f"No color data for piece {piece_index+1}", 
+                   (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+        cv2.imwrite(output_path, vis_img)
+        return
+    
+    # Use the Agg backend which is thread-safe
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(4, 3, figsize=(15, 15))
+    fig.suptitle(f"Piece {piece_index+1} - Edge Color Features", fontsize=16)
+    
+    # Define color names and colors for histograms
+    hist_names = ['Hue', 'Saturation', 'Value']
+    hist_colors = ['green', 'blue', 'red']
+    
+    valid_edges = 0
+    for i, vis_data in enumerate(vis_data_list):
+        if vis_data is None:
+            # Skip edges with no data
+            for j in range(3):
+                axes[i, j].axis('off')
+            continue
+            
+        valid_edges += 1
+        edge_index = vis_data['edge_index']
+        
+        # Convert edge image to RGB for matplotlib
+        edge_img = cv2.cvtColor(vis_data['edge_img'], cv2.COLOR_BGR2RGB)
+        
+        # Show edge image
+        axes[i, 0].imshow(edge_img)
+        axes[i, 0].set_title(f"Edge {edge_index+1}")
+        axes[i, 0].axis('off')
+        
+        # Show histograms
+        hist_list = [vis_data['h_hist'], vis_data['s_hist'], vis_data['v_hist']]
+        
+        for j in range(2):  # Only show Hue and Saturation
+            hist = hist_list[j].flatten()
+            axes[i, j+1].bar(range(len(hist)), hist, color=hist_colors[j], alpha=0.7)
+            axes[i, j+1].set_title(f"{hist_names[j]} Histogram")
+            axes[i, j+1].set_xlim([0, len(hist)-1])
+            axes[i, j+1].grid(alpha=0.3)
+    
+    if valid_edges == 0:
+        for i in range(4):
+            for j in range(3):
+                axes[i, j].axis('off')
+        axes[0, 0].text(0.5, 0.5, "No color data available", 
+                       ha='center', va='center', transform=axes[0, 0].transAxes)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.92)
+    
+    # Save figure directly to file instead of converting to OpenCV image
+    plt.savefig(output_path, dpi=120)
+    plt.close(fig)
 
 def main():
     """Fonction principale simplifiée."""
