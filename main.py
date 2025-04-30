@@ -1,6 +1,4 @@
 """
-Système optimisé de détection et de segmentation des pièces de puzzle
-
 Ce script traite les images de pièces de puzzle sur un fond sombre et
 détecte les pièces individuelles en utilisant des techniques de vision par ordinateur optimisées.
 Toutes les sorties du terminal sont également enregistrées dans un fichier journal.
@@ -134,7 +132,7 @@ def clear_directory(directory_path):
 
 
 def parse_arguments():
-    """Parse les arguments de ligne de commande"""
+    """Parse les arguments de ligne de commande avec options améliorées"""
     parser = argparse.ArgumentParser(
         description="Détecteur de Pièces de Puzzle Optimisé pour la Segmentation"
     )
@@ -142,7 +140,7 @@ def parse_arguments():
     # Paramètres requis
     parser.add_argument("--image", required=True, help="Chemin vers l'image du puzzle")
     
-    # Paramètres optionnels
+    # Paramètres optionnels standard
     parser.add_argument("--pieces", type=int, help="Nombre attendu de pièces dans le puzzle")
     parser.add_argument("--debug-dir", default="debug", help="Répertoire pour sauvegarder les sorties de débogage")
     parser.add_argument("--log-dir", default="logs", help="Répertoire pour sauvegarder les fichiers journaux")
@@ -179,8 +177,21 @@ def parse_arguments():
     parser.add_argument("--save-results", action="store_true", help="Sauvegarder les résultats de détection")
     parser.add_argument("--output-dir", default="results", help="Répertoire pour sauvegarder les résultats")
     
+    # NOUVELLES OPTIONS pour la méthode simplifiée
+    parser.add_argument("--use-simple-approach", action="store_true", 
+                       help="Utiliser l'approche simple comme dans test2.py")
+    parser.add_argument("--simple-threshold", type=int, default=30, 
+                       help="Valeur de seuil pour l'approche simple (default: 30)")
+    parser.add_argument("--simple-scale", type=int, default=30, 
+                       help="Pourcentage d'échelle pour l'approche simple (default: 30%)")
+    parser.add_argument("--contour-smoothing", action="store_true", 
+                       help="Appliquer un lissage aux contours pour réduire la sur-segmentation")
+    parser.add_argument("--detection-method", choices=["standard", "simple", "watershed", "hybrid"], 
+                       default="standard", help="Méthode de détection à utiliser")
+    parser.add_argument("--improve-contours", action="store_true", 
+                       help="Appliquer des améliorations supplémentaires aux contours")
+    
     return parser.parse_args()
-
 
 
 def create_config(args):
@@ -325,7 +336,7 @@ def view_images(results):
     cv2.destroyAllWindows()
 
 def main():
-    """Point d'entrée principal pour le détecteur de pièces de puzzle"""
+    """Point d'entrée principal pour le détecteur de pièces de puzzle avec options améliorées"""
     # Démarrage du chronométrage
     start_time = time.time()
     
@@ -346,7 +357,7 @@ def main():
         max_cache_size_mb=args.max_cache_size
     )
     
-    # Afficher les informations sur le cache si demandé
+    # Gestion des options du cache si demandées
     if args.cache_info:
         cache_stats = processor.manage_cache()
         progress_logger = logging.getLogger('progress')
@@ -370,22 +381,6 @@ def main():
         progress_logger = logging.getLogger('progress')
         progress_logger.info("Cache du pipeline vidé avec succès")
     
-    # Test du multiprocessing si activé
-    """
-    if args.use_multiprocessing:
-        num_processes = args.processes if args.processes > 0 else max(1, cpu_count() - 1)
-        progress_logger = logging.getLogger('progress')
-        progress_logger.info(f"Test de parallélisation avec {num_processes} processus...")
-        verify_multiprocessing(num_processes)
-    """
-    # Ajout d'option de profilage des performances
-    if args.profile:
-        import cProfile
-        import pstats
-        from io import StringIO
-        profiler = cProfile.Profile()
-        profiler.enable()
-        
     # Nettoyage des répertoires de débogage et d'extraction de pièces
     logging.info("Nettoyage des répertoires de sortie...")
     clear_directory(args.debug_dir)
@@ -404,15 +399,18 @@ def main():
     if args.pieces:
         logging.info(f"Pièces attendues: {args.pieces}")
     
-    if args.fast_mode:
-        logging.info("Mode rapide activé")
+    # Journalisation des nouveaux paramètres
+    if args.detection_method != "standard":
+        logging.info(f"Méthode de détection: {args.detection_method}")
     
-    if args.adaptive_preprocessing:
-        logging.info("Utilisation du prétraitement adaptatif")
+    if args.use_simple_approach:
+        logging.info(f"Utilisation de l'approche simplifiée avec seuil={args.simple_threshold}, échelle={args.simple_scale}%")
     
-    # Journalisation des paramètres de vérification
-    if args.area_verification:
-        logging.info(f"Utilisation de la vérification finale par aire (seuil: {args.area_threshold})")
+    if args.contour_smoothing:
+        logging.info("Lissage des contours activé")
+    
+    if args.improve_contours:
+        logging.info("Amélioration des contours activée")
     
     # Analyse des caractéristiques de l'image si demandé
     if args.analyze_image:
@@ -428,8 +426,54 @@ def main():
         config.optimize_for_image_characteristics(analysis)
         logging.info("Configuration optimisée en fonction des caractéristiques de l'image")
     
-    # Traitement de l'image
-    results = process_image(processor, args)
+    # Traitement de l'image avec les nouvelles options
+    if args.detection_method != "standard" or args.use_simple_approach:
+        # Utiliser la méthode de détection appropriée
+        if args.detection_method == "simple" or args.use_simple_approach:
+            results = processor.process_image_hybrid(
+                args.image,
+                expected_pieces=args.pieces,
+                use_simple_approach=True,
+                simple_threshold=args.simple_threshold,
+                simple_scale=args.simple_scale,
+                use_area_verification=args.area_verification,
+                area_verification_threshold=args.area_threshold,
+                use_comprehensive_verification=args.comprehensive_verification,
+                improve_contours=args.improve_contours,
+                contour_smoothing=args.contour_smoothing
+            )
+        elif args.detection_method in ["watershed", "hybrid"]:
+            results = processor.process_image_with_method(
+                args.image,
+                method=args.detection_method,
+                expected_pieces=args.pieces,
+                threshold=args.simple_threshold,
+                scale_percent=args.simple_scale,
+                use_area_verification=args.area_verification,
+                area_verification_threshold=args.area_threshold,
+                use_comprehensive_verification=args.comprehensive_verification,
+                improve_contours=args.improve_contours
+            )
+        else:
+            # Ne devrait pas se produire à cause des choix restreints dans argparse
+            results = processor.process_image(
+                args.image,
+                expected_pieces=args.pieces,
+                fast_mode=args.fast_mode,
+                use_area_verification=args.area_verification,
+                area_verification_threshold=args.area_threshold,
+                use_comprehensive_verification=args.comprehensive_verification
+            )
+    else:
+        # Utiliser la méthode de traitement standard
+        results = processor.process_image(
+            args.image,
+            expected_pieces=args.pieces,
+            fast_mode=args.fast_mode,
+            use_area_verification=args.area_verification,
+            area_verification_threshold=args.area_threshold,
+            use_comprehensive_verification=args.comprehensive_verification
+        )
     
     # Extraction des pièces individuelles si demandé
     if args.extract:
@@ -438,12 +482,6 @@ def main():
     
     # Affichage des résultats
     display_results(results, args.pieces)
-    
-    # Afficher dans les résultats si le cache a été utilisé
-    if args.use_cache and 'cache_used' in results:
-        cache_hit = results.get('metrics', {}).get('cache_hit', False)
-        if cache_hit:
-            logging.info("Cache utilisé pour accélérer le traitement")
     
     # Sauvegarde des résultats si demandé
     if args.save_results:
@@ -454,14 +492,6 @@ def main():
     if args.view:
         view_images(results)
         
-    # Fin du profilage si activé
-    if args.profile:
-        profiler.disable()
-        s = StringIO()
-        ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
-        ps.print_stats(20)  # Afficher les 20 principaux consommateurs de temps
-        logging.info("Profil de Performance:\n" + s.getvalue())
-    
     # Rapport du temps de traitement total
     total_time = time.time() - start_time
     logging.info(f"Temps de traitement total: {total_time:.2f} secondes")

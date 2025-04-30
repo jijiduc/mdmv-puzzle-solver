@@ -4,4 +4,5 @@ extracted_pieces/*
 .mypy_cache/*
 results/*
 logs/*
+.cache/*
 cache/*
