@@ -1,0 +1,95 @@
+Potential Improvements for Edge Matching
+
+  1. Use Contour Matching: Implement more sophisticated contour matching techniques like
+  Hausdorff distance or Procrustes analysis to better compare edge shapes beyond simple
+  intrusion/extrusion classification.
+  2. Machine Learning for Feature Extraction: Train a model to learn what makes edges compatible
+   by providing examples of correctly matched pieces, potentially using siamese networks to
+  compute similarity scores.
+  3. Improved Spatial Color Analysis: Adapt the spatial sampling density based on edge length to
+   ensure consistent feature resolution, and weight samples by their position (e.g., focus more
+  on middle sections where distinctive patterns often occur).
+  4. Contextual Edge Matching: Consider neighboring edges when scoring matches, since real
+  puzzles often have color themes or patterns that continue across multiple pieces.
+  5. Texture Features: Add texture descriptors (LBP, GLCM features) to better capture patterns
+  beyond color histograms, especially useful for areas with similar colors but different
+  textures.
+  6. Corner Compatibility Scoring: Add specific scoring for how well corner regions align
+  between matched edges, as corners often have distinctive features.
+  7. Gradient Direction Matching: Compare the direction of color gradients across potential
+  matches, not just their magnitude, to ensure transitions align correctly.
+  8. Global Puzzle Context: Introduce a global constraint system that considers the overall
+  puzzle state and improves scores for matches that fit logically in the emerging image.
+  9. Adaptive Weighting: Dynamically adjust the shape/color weight ratio based on piece
+  characteristics (e.g., more weight on shape for highly distinctive edges).
+  10. Rotational Invariance: Add support for considering rotated pieces by comparing edges at
+  different orientations.
+  11. Ensemble Matching Approach: Combine multiple matching algorithms and feature sets, using a
+   voting or weighted ensemble to improve accuracy.
+  12. Backtracking Assembly: Implement backtracking in the assembly algorithm to escape local
+  optima when initial high-scoring matches lead to poor overall results.
+
+   Hausdorff Distance and Procrustes Analysis
+
+  Hausdorff Distance
+
+  The Hausdorff distance measures how far two subsets of a metric space are from each other,
+  making it excellent for comparing edge contours.
+
+  How it works:
+  1. For each point on edge A, find the closest point on edge B
+  2. Take the maximum of all these minimum distances
+  3. Repeat steps 1-2 in reverse (B to A)
+  4. The Hausdorff distance is the greater of these two maximums
+
+  Mathematical definition:
+  H(A,B) = max(h(A,B), h(B,A))
+  where:
+  h(A,B) = max_{a∈A} min_{b∈B} ||a-b||
+
+  Benefits for puzzle matching:
+  - Handles irregular edge shapes naturally
+  - Accounts for all points along both edges
+  - Detects even small misalignments that might be missed by simpler methods
+  - Provides a single distance metric that captures overall shape similarity
+
+  Implementation in puzzle context:
+  For edge matching, you would:
+  1. Sample points along both edge contours
+  2. Compute the Hausdorff distance between these point sets
+  3. Normalize by edge length for fair comparison between edges of different sizes
+  4. Convert the distance to a similarity score (smaller distance = better match)
+
+  Procrustes Analysis
+
+  Procrustes analysis is a statistical method that finds the optimal transformation
+  (translation, rotation, scaling) to superimpose one shape onto another.
+
+  How it works:
+  1. Align the centroids of both shapes
+  2. Find the optimal rotation that minimizes the sum of squared distances between corresponding
+   points
+  3. Optionally scale one shape to match the other
+  4. Calculate the remaining difference after alignment as the similarity measure
+
+  Mathematical approach:
+  1. Centered coordinates: subtract centroid from each point
+  2. Calculate optimal rotation matrix using Singular Value Decomposition (SVD)
+  3. Apply rotation and compute residual differences
+
+  Benefits for puzzle matching:
+  - Handles different orientations automatically
+  - Provides a measure of how well edges fit after optimal alignment
+  - Accounts for small variations in edge shape that might be due to manufacturing tolerances
+  - Works well for complementary shapes (like puzzle tabs and slots)
+
+  Implementation in puzzle context:
+  For edge matching, you would:
+  1. Extract point sets representing each edge
+  2. Flip one edge to account for the complementary nature of matching edges
+  3. Apply Procrustes analysis to find optimal alignment
+  4. Use the residual (minimum achievable distance after alignment) as your matching score
+
+  Both methods are significantly more powerful than simple edge type classification because they
+   consider the complete geometry of the edges rather than reducing them to broad categories
+  like "intrusion" or "extrusion".

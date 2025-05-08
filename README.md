@@ -2,290 +2,444 @@
 
 Project of Model Driven Machine Vision (Course 206.2) course, lectured by Professor Louis Lettry.
 
-## Project Context
+## Puzzle Solver Pipeline
 
-This project aims to develop a robust solution for outputting a complete image file from a photograph containing dispersed puzzle pieces. From a broader perspective, such a task could arise in real-life situations when aiming to develop a solution for reassembling broken 2D artifacts by matching individual pieces together.
+This project implements a complete pipeline for puzzle piece detection, edge extraction, feature analysis, and puzzle assembly. The pipeline consists of five main phases:
 
-## Problem Analysis
+1. **Segmentation**: Detection and isolation of individual puzzle pieces from the input image
+2. **Edge Extraction**: Identification and extraction of the edges of each puzzle piece
+3. **Feature Extraction**: Analysis of both shape and color features of the extracted edges
+4. **Edge Matching**: Computation of compatibility scores between edges of different pieces
+5. **Puzzle Assembly**: Assembly of pieces based on edge compatibility scores
 
-To approach this problem, we consider several key questions:
+## Implementation Details
 
-- **Image Acquisition**: How should we capture images of the pieces to ensure consistency and accuracy?
-- **Piece Definition**: What constitutes a piece in our system? How do we define a complete puzzle?
-- **Differentiation**: What characteristics distinguish one piece from another?
-- **Assembly Logic**: What algorithms and methods can we use to reassemble pieces into a correct puzzle?
-- **Project Boundaries**: What constraints exist regarding number of pieces, piece shapes, colors, etc.?
-- **Solution Scope**: What are the limitations and capabilities of our proposed solution?
-- **Constraints**: What implicit/explicit constraints must we consider?
+### 1. Segmentation
 
-## Problem Formalization
+The segmentation phase processes the input image to isolate individual puzzle pieces:
 
-When capturing images of puzzle pieces, we should:
-
-- Minimize variability in photovolumetric parameters
-- Use a unified background color that contrasts with the puzzle pieces (especially important for monochrome puzzles): our current choice is a black piece of fabric
-- Ensure all pieces are visible and well-separated in the input image
-
-The device chosen for taking the images is a Samsung Galaxy S24 Ultra.
-
-Key definitions:
-
-- **Piece**: A 2D form bounded by a defined perimeter
-- **Contour**: A continuous and finite line forming the perimeter of a piece
-- **Border**: An element formed from an n-cutting from the perimeter of a piece
-- **straight border**: A border where the shape is a straight line
-- **tab border**: A border where there is a bump coming out of a straight border
-- **pocket border**: A border where there is a cavity into a straight border
-- **Piece Differentiation**: Pieces can be distinguished by analyzing their boundaries and colors
-- **Puzzle**: A finite ordered group of pieces whose boundaries match perfectly with each other without gaps
-- **Classic Puzzle**: A puzzle with pieces of varied forms, bounded by 4 segments forming a rectangle, with the assembled pieces depicting a colored image
-- **Monochrome Puzzle**: A puzzle with a unicolor motif created from the assembled pieces
-- **Form Puzzle**: A puzzle whose pieces all have the same shape
-
-## Enhanced Solution Approach
-
-Our enhanced solution implements a robust, adaptive detection system:
-
-1. **Multi-Channel Preprocessing**  
-   1.1. Analyze image characteristics to determine optimal processing  
-   1.2. Process multiple color channels (RGB, HSV, LAB) in parallel  
-   1.3. Select the best channel representation for piece detection  
-   1.4. Apply adaptive contrast enhancement based on image properties  
-
-2. **Adaptive Parameter Optimization**  
-   2.1. Dynamically test multiple parameter combinations  
-   2.2. Optimize settings based on image characteristics  
-   2.3. Use statistical clustering to determine optimal thresholds  
-
-3. **Enhanced Contour Detection**  
-   3.1. Use multiple methods for finding contours  
-   3.2. Apply statistical filtering with robust metrics  
-   3.3. Implement two-stage filtering to recover valid pieces  
-   3.4. Validate contours using shape characteristics  
-
-4. **Multi-Pass Detection**  
-   4.1. Run multiple detection passes with different settings  
-   4.2. Combine results from different passes  
-   4.3. Remove duplicate detections between passes  
-
-5. **Advanced Corner and Border Analysis**  
-   5.1. Detect corners using adaptive algorithms  
-   5.2. Classify borders as straight, tab, or pocket  
-   5.3. Calculate validation scores for piece quality assessment  
-
-6. **Image Reconstruction**  
-   6.1. Analyze potential matches between pieces  
-   6.2. Realign pieces based on orientation  
-   6.3. Generate final complete image  
-
-## Implementation Tools
-
-- OpenCV for image processing and computer vision tasks
-- Python 3.13.2 as the primary programming language
-- NumPy and SciPy for numerical computations and statistical analysis
-- Multiprocessing for parallel execution of detection tasks
-- Additional libraries as needed for specific algorithms (under the approval of Prof. Lettry)
-
-## Evaluation Metrics
-
-- Accuracy of piece matching
-- Completeness of puzzle reconstruction
-- Quality of the final generated image
-- Processing time
-- Robustness across different puzzle types and piece configurations
-- Ability to handle puzzles with varying numbers of pieces
-
-## Usage
-
-Here is how to use the enhanced program:
-
-### Install requirements
-
-```bash
-pip install -r requirements.txt
-```
-
-### Basic usage
-
-```bash
-# Basic usage
-python main.py --image picture\puzzle_24-1\b-2.jpg 
-
-# Actual usage
-python main.py --image picture\puzzle_24-1\b-2.jpg --pieces 24 --use-multiprocessing --processes 14 --use-cache --clear-cache --cache-dir cache --adaptive-preprocessing --comprehensive-verification --debug --save-results --profile --analyze-image --area-verification --max-cache-size 4000
-```
-
-### Command-line options
-
-```bash
-Required parameters:
-  --image           Path to the puzzle image (required)
-
-Optional parameters:
-  --pieces          Expected number of pieces in the puzzle
-  --debug-dir       Directory to save debug outputs (default: "debug")
-  --extract         Extract individual pieces to separate files
-  --extract-dir     Directory to save extracted pieces (default: "extracted_pieces")
-  --use-multiprocessing  Use multiprocessing for faster detection
-  --view            View results in image windows
-  --auto-threshold  Apply both Otsu and adaptive thresholding
-  --no-mean-filter  Disable filtering by mean area
-  --mean-threshold  Standard deviation threshold for mean filtering (default: 1.5)
-  
-Enhanced detection options:
-  --adaptive-preprocessing  Use adaptive multi-channel preprocessing
-  --optimize-parameters     Test multiple parameter combinations and select the best
-  --multi-pass             Run multiple detection passes with different settings
-  --analyze-image          Analyze image characteristics and optimize settings accordingly
-```
-
-## Advanced Features
-
-### Adaptive Preprocessing
-
-The system analyzes the image characteristics and selects the optimal preprocessing approach from multiple color spaces and channels (RGB, HSV, LAB). This enables robust detection across varying lighting conditions and piece colors.
-
-### Parameter Optimization
-
-Instead of fixed parameters, the system can automatically test multiple parameter combinations to find the optimal settings for a specific image. This adapts to different puzzle types and image conditions.
-
-### Multi-Pass Detection
-
-By running multiple detection passes with different settings and combining the results, the system can detect pieces that might be missed by a single approach. This significantly improves detection rates.
-
-### Statistical Filtering
-
-The system uses robust statistical measures (median absolute deviation instead of standard deviation) for more accurate filtering of contours, reducing false negatives and false positives.
-
-### Enhanced Validation
-
-Each detected piece is assigned a validation score based on multiple criteria, allowing for quality assessment and potential filtering of invalid detections.
-
-# Final Verification Step for Puzzle Piece Detection
-
-## Overview
-
-The final verification step provides an additional layer of filtering to ensure that only legitimate puzzle pieces are included in the results. This feature is particularly useful for challenging images where initial detection may include false positives (shadows, reflections, or other objects misidentified as puzzle pieces).
-
-## Key Features
-
-1. **Area-based Verification**
-   - Filters out pieces that deviate significantly from the mean area
-   - Configurable threshold to control strictness (in standard deviations)
-   - Especially useful for puzzles where all pieces should have similar sizes
-
-2. **Comprehensive Verification**
-   - Combines multiple criteria: area, aspect ratio, and validation score
-   - Adaptive thresholds based on expected piece count
-   - Recovery mechanism if too many pieces are filtered out
-
-3. **Visualization**
-   - Clear display of verified vs rejected pieces
-   - Detailed rejection reasons shown on the image
-   - Enhanced metrics visualization showing verification results
-
-## Usage
-
-### Command Line Options
-
-The following command line arguments have been added:
-
-```
---area-verification        Enable final area verification
---area-threshold FLOAT     Standard deviation threshold (default: 2.0)
---comprehensive-verification  Enable comprehensive verification
-```
-
-### Example Commands
-
-Basic area verification:
-```bash
-python main.py --image puzzle.jpg --pieces 24 --area-verification
-```
-
-Stricter area filtering:
-```bash
-python main.py --image puzzle.jpg --pieces 24 --area-verification --area-threshold 1.5
-```
-
-Comprehensive verification:
-```bash
-python main.py --image puzzle.jpg --pieces 24 --comprehensive-verification
-```
-
-### API Usage
-
-When using the `PuzzleProcessor` class directly:
+- Converts the image to grayscale and applies thresholding
+- Uses morphological operations (closing and dilation) to clean up the binary mask
+- Detects contours in the mask and filters out noise based on contour area
+- Creates bounding boxes around valid contours to extract individual pieces
+- Applies a mask to each piece to isolate it from the background
 
 ```python
-# Basic area verification
-results = processor.process_image(
-    "puzzle.jpg",
-    expected_pieces=24,
-    use_area_verification=True,
-    area_verification_threshold=2.0
+# Core segmentation process
+gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+_, binary_mask = cv2.threshold(gray_img, threshold_value, 255, cv2.THRESH_BINARY)
+closed_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, closing_kernel)
+processed_mask = cv2.dilate(closed_mask, dilation_kernel, iterations=1)
+contours, _ = cv2.findContours(processed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+valid_contours = [c for c in contours if cv2.contourArea(c) > min_area]
+```
+
+### 2. Edge Extraction
+
+Once pieces are segmented, the edge extraction phase identifies the corners and edges of each piece:
+
+- Computes the contour of each piece using Canny edge detection
+- Calculates distances and angles from the centroid to all contour points
+- Uses peak detection on the distance function to find corner candidates
+- Selects the best 4 corners to form a quadrilateral representing the piece
+- Extracts edge points between consecutive corners
+
+```python
+# Corner detection approach
+peaks, _ = find_peaks(
+    sorted_distances_smooth, 
+    prominence=5,
+    distance=len(sorted_distances_smooth)/15
 )
 
-# Comprehensive verification
-results = processor.process_image(
-    "puzzle.jpg",
-    expected_pieces=24,
-    use_comprehensive_verification=True
-)
+# Edge extraction between corners
+def extract_edge_between_corners(corners, corner_idx1, corner_idx2, edge_coords, centroid):
+    # Calculate angles from centroid to corners
+    angle1 = math.atan2(corner1[1] - centroid_y, corner1[0] - centroid_x)
+    angle2 = math.atan2(corner2[1] - centroid_y, corner2[0] - centroid_x)
+    
+    # Extract points between the angular range
+    angle_mask = (all_angles_normalized >= angle1) & (all_angles_normalized <= angle2)
+    filtered_points = edge_coords[angle_mask]
+    
+    # Sort points by angle
+    sorted_indices = np.argsort([math.atan2(y - centroid_y, x - centroid_x) for x, y in filtered_points])
+    sorted_points = filtered_points[sorted_indices]
+    
+    return sorted_points
 ```
 
-## Technical Details
+#### Distance Transforms for Corner Detection
 
-### Area Verification
+A key component of the edge extraction process is the use of distance transforms to enhance corner detection. Distance transforms are used to:
 
-The area verification calculates the mean and standard deviation of all detected piece areas, then rejects pieces whose areas fall outside the range:
+1. **Emphasize Corner Features**: 
+   - The distance transform calculates how far each pixel is from the piece boundary
+   - This creates a gradient map where corners appear as distinctive local maxima
+   - Transforms make corner detection more robust against noise and irregularities
 
+2. **Implementation Details**:
+   - A binary mask of each puzzle piece is created
+   - The distance transform is applied to this mask using `cv2.distanceTransform`
+   - The transform creates a distance field where each pixel's value corresponds to its distance from the nearest contour edge
+   - This field is normalized and analyzed for distinctive patterns
+   
+   ```python
+   # Create binary mask for the piece
+   piece_mask = np.zeros(piece_img.shape[:2], dtype=np.uint8)
+   cv2.drawContours(piece_mask, [piece_contour], 0, 255, -1)
+   
+   # Apply distance transform
+   dist_transform = cv2.distanceTransform(piece_mask, cv2.DIST_L2, 5)
+   
+   # Normalize for visualization
+   dist_transform_vis = cv2.normalize(dist_transform, None, 0, 255, cv2.NORM_MINMAX)
+   dist_transform_vis = np.uint8(dist_transform_vis)
+   
+   # Create colormap for better visualization
+   dist_transform_color = cv2.applyColorMap(dist_transform_vis, cv2.COLORMAP_JET)
+   ```
+
+3. **Analytical Applications**:
+   - Identifies prominent features like tabs and slots by examining local maxima in the distance field
+   - Helps classify edge types by analyzing distance field gradients
+   - Provides additional data for shape characterization
+   - Creates useful visualizations for debugging and analysis (stored in the debug/transforms directory)
+
+4. **Benefits for Edge Matching**:
+   - More accurate corner detection leads to better edge extraction
+   - Improved shape feature extraction through complementary analysis methods
+   - Enhanced robustness against variations in piece sizes and shapes
+   - Provides additional metrics that help differentiate similar looking edges
+
+### 3. Features Extraction
+
+Each edge is analyzed to extract both shape and color features:
+
+#### Shape Features:
+
+The edge shape analysis provides detailed geometric characterization of each puzzle piece edge:
+
+1. **Edge Classification System**:
+   - **Straight**: Edges with minimal deviation from a straight line between corners
+   - **Intrusion**: Edges that curve inward toward the center of the piece (concave)
+   - **Extrusion**: Edges that curve outward away from the center of the piece (convex)
+
+2. **Mathematical Approach**:
+   - Creates a reference line connecting adjacent corners
+   - Projects each edge point onto this reference line
+   - Calculates perpendicular distance from each point to the reference line
+   - Determines sign of deviation (positive = outward, negative = inward)
+   - Uses an adaptive threshold based on edge length (5px or 5% of length)
+
+3. **Statistical Analysis**:
+   - Calculates mean deviation across all edge points
+   - Identifies maximum absolute deviation
+   - Counts significant deviations exceeding the threshold
+   - Analyzes distribution pattern of deviations
+
+4. **Classification Logic**:
+   - Calculates the percentage of significant deviations
+   - Examines the balance between positive and negative deviations
+   - Determines maximum deviation magnitude for matching purposes
+   - Considers the overall shape pattern of the edge
+
+```python
+def classify_edge(edge_points, corner1, corner2, centroid):
+    # Step a: Create vector for straight line between corners
+    x1, y1 = corner1
+    x2, y2 = corner2
+    line_vec = (x2-x1, y2-y1)
+    line_length = math.sqrt(line_vec[0]**2 + line_vec[1]**2)
+    
+    # Step b: Determine outward normal vector (perpendicular to line, pointing away from centroid)
+    normal_vec = (-line_vec[1]/line_length, line_vec[0]/line_length)
+    mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
+    centroid_to_mid = (mid_x - centroid[0], mid_y - centroid[1])
+    normal_direction = centroid_to_mid[0]*normal_vec[0] + centroid_to_mid[1]*normal_vec[1]
+    outward_normal = normal_vec if normal_direction > 0 else (-normal_vec[0], -normal_vec[1])
+    
+    # Step c: Calculate deviations for all edge points
+    deviations = []
+    for x, y in edge_points:
+        # Vector from corner1 to the current point
+        point_vec = (x-x1, y-y1)
+        
+        # Project point onto reference line
+        line_dot = (point_vec[0]*line_vec[0] + point_vec[1]*line_vec[1]) / line_length
+        proj_x = x1 + line_dot * line_vec[0] / line_length
+        proj_y = y1 + line_dot * line_vec[1] / line_length
+        
+        # Calculate deviation vector and magnitude
+        dev_vec = (x-proj_x, y-proj_y)
+        deviation = math.sqrt(dev_vec[0]**2 + dev_vec[1]**2)
+        
+        # Determine sign (positive = outward/extrusion, negative = inward/intrusion)
+        sign = 1 if (dev_vec[0]*outward_normal[0] + dev_vec[1]*outward_normal[1]) > 0 else -1
+        deviations.append(sign * deviation)
+    
+    # Step d: Calculate statistics for classification
+    mean_deviation = sum(deviations) / len(deviations)
+    abs_deviations = [abs(d) for d in deviations]
+    max_abs_deviation = max(abs_deviations)
+    
+    # Adaptive threshold based on edge length
+    straight_threshold = max(5, line_length * 0.05)  # 5px or 5% of line length
+    
+    # Count significant deviations
+    significant_positive = sum(1 for d in deviations if d > straight_threshold)
+    significant_negative = sum(1 for d in deviations if d < -straight_threshold)
+    portion_significant = (significant_positive + significant_negative) / len(deviations)
+    
+    # Step e: Classify the edge type
+    if max_abs_deviation < straight_threshold or portion_significant < 0.2:
+        # Small deviations or few significant points = straight edge
+        edge_type = "straight"
+        max_deviation = mean_deviation
+    elif abs(mean_deviation) < straight_threshold * 0.5:
+        # Mean close to zero but mixed deviations
+        if significant_positive > significant_negative * 2:
+            edge_type = "extrusion"
+            max_deviation = max([d for d in deviations if d > 0], default=0)
+        elif significant_negative > significant_positive * 2:
+            edge_type = "intrusion"
+            max_deviation = min([d for d in deviations if d < 0], default=0)
+        else:
+            # Balanced deviations - likely a straight edge with noise
+            edge_type = "straight"
+            max_deviation = mean_deviation
+    elif mean_deviation > 0:
+        # Overall positive deviation = extrusion
+        edge_type = "extrusion"
+        max_deviation = max(deviations)
+    else:
+        # Overall negative deviation = intrusion
+        edge_type = "intrusion"
+        max_deviation = min(deviations)
+    
+    return edge_type, max_deviation
 ```
-[mean - threshold × std_dev, mean + threshold × std_dev]
+
+When matching edges, the shape features are used to identify complementary edges:
+
+```python
+def calculate_shape_compatibility(edge1_type, edge1_deviation, edge2_type, edge2_deviation):
+    # Intrusion should match with extrusion (tab and slot)
+    if edge1_type == "intrusion" and edge2_type == "extrusion":
+        # Check if deviations are complementary (similar magnitude)
+        deviation_match = 1.0 - min(1.0, abs(abs(edge1_deviation) - abs(edge2_deviation)) / 
+                                    max(abs(edge1_deviation), abs(edge2_deviation), 1))
+        return 0.9 * deviation_match  # High score for complementary edges
+    
+    # Same check for opposite pairing
+    if edge1_type == "extrusion" and edge2_type == "intrusion":
+        deviation_match = 1.0 - min(1.0, abs(abs(edge1_deviation) - abs(edge2_deviation)) / 
+                                   max(abs(edge1_deviation), abs(edge2_deviation), 1))
+        return 0.9 * deviation_match
+    
+    # Straight edges can match with other straight edges (e.g., at the puzzle border)
+    if edge1_type == "straight" and edge2_type == "straight":
+        return 0.7  # Moderate score for straight-straight
+    
+    # All other combinations are unlikely matches
+    return 0.1  # Low compatibility score
 ```
 
-Where:
-- `mean` is the average area of all detected pieces
-- `std_dev` is the standard deviation of piece areas
-- `threshold` is the configurable parameter (default: 2.0)
+This detailed shape analysis enables accurate matching of puzzle pieces by finding complementary edge geometries, with particular attention to the magnitude and pattern of deviations that help identify matching tab and slot edges.
 
-### Comprehensive Verification
+#### Color Features:
 
-The comprehensive verification applies multiple filters in sequence:
+The color feature extraction implements three key enhancements for improved matching accuracy:
 
-1. **Area filtering**: Same as area verification
-2. **Aspect ratio filtering**: Rejects pieces with extreme aspect ratios
-3. **Validation score filtering**: Rejects pieces with low validation scores
+1. **Spatial Awareness**:
+   - Divides each edge into 5 segments to preserve spatial color information
+   - Tracks color patterns along the edge, from one corner to the other
+   - Enables matching edges with specific color transitions or patterns
 
-If too many pieces are rejected relative to the expected count, the verification automatically relaxes its criteria to recover more pieces.
+2. **Gradient/Transition Analysis**:
+   - Detects and quantifies color changes along the edge
+   - Calculates gradient statistics (mean, max) for each HSV channel
+   - Counts significant color transitions to identify distinctive edges
 
-## Visualizations
+3. **Higher Resolution Histograms**:
+   - Uses 32 bins (instead of 16) for finer color differentiation
+   - Captures more subtle color variations in each edge
+   - Improves matching accuracy for complex or similar colored pieces
 
-The verification process generates additional visualizations:
+```python
+def extract_edge_color_features(piece_img, edge_points, corner1, corner2, edge_index):
+    # Basic sampling (same as before)
+    mask = np.zeros(piece_img.shape[:2], dtype=np.uint8)
+    for x, y in edge_points:
+        cv2.circle(mask, (int(x), int(y)), 3, 255, -1)
+    
+    samples_bgr = piece_img[mask == 255]
+    samples_hsv = cv2.cvtColor(samples_bgr.reshape(-1, 1, 3), cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    
+    # 1. Higher resolution histograms (32 bins)
+    bins = 32
+    h_hist = np.histogram(samples_hsv[:, 0], bins=bins, range=(0, 180))[0]
+    
+    # 2. Spatial awareness - divide edge into segments
+    num_segments = 5
+    segment_length = max(1, len(sorted_points) // num_segments)
+    
+    # Calculate histogram for each segment
+    spatial_h_hists = []
+    for i in range(num_segments):
+        segment_points = sorted_points[start_idx:end_idx]
+        # [create and store segment histograms]
+    
+    # 3. Gradient/Transition features
+    # Calculate gradients (differences between adjacent points)
+    h_diffs = np.abs(np.diff(edge_hsv[:, 0]))
+    # [calculate gradient statistics]
+    
+    transition_features = {
+        'mean_h_gradient': float(np.mean(h_diffs)),
+        'max_h_gradient': float(np.max(h_diffs)),
+        'gradient_count': int(np.sum(h_diffs > 20))
+    }
+    
+    # Create enhanced feature vector with all features
+    color_feature = {
+        'h_hist': h_hist.tolist(),
+        'spatial_h_hists': spatial_h_hists,
+        'transition_features': transition_features
+    }
+```
 
-1. **Verification visualization**: Shows verified pieces in green and rejected pieces in red
-2. **Enhanced metrics**: Shows statistics before and after verification
-3. **Piece count comparison**: Bar chart comparing original, verified, and expected counts
+These color features are combined during matching with appropriate weights to provide more accurate edge compatibility scores:
 
-## Implementation
+```python
+def calculate_color_compatibility(color_feature1, color_feature2):
+    # 1. Global histogram comparison
+    global_color_score = compare_histograms()
+    
+    # 2. Spatial histogram comparison (segment by segment)
+    spatial_score = compare_spatial_segments()
+    
+    # 3. Compare color transition/gradient features
+    gradient_score = compare_transitions()
+    
+    # 4. Compare basic color statistics
+    mean_score = compare_means()
+    
+    # Combine all scores with appropriate weights
+    final_score = (
+        0.3 * global_color_score +  # Base color distribution
+        0.3 * spatial_score +       # Spatial color patterns
+        0.25 * gradient_score +     # Color transitions
+        0.15 * mean_score           # Basic color similarity
+    )
+```
 
-The verification is implemented in the following files:
+### 4. Edge Matching
 
-- `src/utils/verification.py`: Core verification functions
-- `src/core/processor.py`: Integration into the processing pipeline
-- `main.py`: Command line interface options
+The edge matching phase computes compatibility scores between edges of different pieces:
 
-## Performance Considerations
+- Compares all possible pairs of edges between different pieces
+- Calculates shape compatibility based on complementary edge types (intrusion matches with extrusion)
+- Computes color compatibility by comparing histograms and color statistics
+- Combines shape and color scores with appropriate weights (70% shape, 30% color)
+- Selects matches above a certain threshold score
 
-The verification step adds minimal processing overhead while significantly improving detection accuracy. The typical processing time increase is less than 5%.
+```python
+def calculate_shape_compatibility(edge1_type, edge1_deviation, edge2_type, edge2_deviation):
+    # Complementary types get high scores
+    if edge1_type == "intrusion" and edge2_type == "extrusion":
+        deviation_match = 1.0 - min(1.0, abs(abs(edge1_deviation) - abs(edge2_deviation)) / max(abs(edge1_deviation), abs(edge2_deviation), 1))
+        return 0.9 * deviation_match
+    
+    # Straight-straight gets moderate score
+    if edge1_type == "straight" and edge2_type == "straight":
+        return 0.7
+    
+    # Default low compatibility
+    return 0.1
 
-## Debug Output
+def calculate_color_compatibility(color_feature1, color_feature2):
+    # Compare histograms using correlation method
+    h_corr = cv2.compareHist(np.array(color_feature1['h_hist'], dtype=np.float32), 
+                           np.array(color_feature2['h_hist'], dtype=np.float32), 
+                           cv2.HISTCMP_CORREL)
+    
+    # Compare mean HSV values
+    mean_diff_h = abs(color_feature1['mean_hsv'][0] - color_feature2['mean_hsv'][0]) / 180.0
+    mean_score = 1.0 - (0.5 * mean_diff_h + 0.3 * mean_diff_s + 0.2 * mean_diff_v)
+    
+    # Combine histogram and mean scores
+    final_score = 0.6 * color_score + 0.4 * mean_score
+```
 
-The system generates comprehensive debug output in the debug directory:
-- Visualizations of each processing stage
-- Detected piece visualizations with border type classification
-- Detailed metrics and analysis
-- Parameter optimization results
+### 5. Puzzle Assembly
+
+The final phase assembles the puzzle based on the matched edges:
+
+- Represents the puzzle as a grid where pieces can be placed
+- Starts with a seed piece (the one with most high-quality matches)
+- Maintains a frontier of candidate pieces that could be placed next
+- Iteratively places the piece with the highest match score
+- Handles the spatial arrangement of pieces based on edge orientations
+
+```python
+class PuzzleAssembler:
+    def start_assembly(self):
+        # Choose seed piece with most high-quality matches
+        seed_piece_idx = max(seed_candidates.items(), key=lambda x: x[1])[0]
+        self.place_piece(seed_piece_idx, 0, 0)
+        self.update_frontier()
+    
+    def assemble_next_piece(self):
+        # Find best piece to place next
+        for piece_idx in self.frontier:
+            position, edge_match = self.determine_piece_position(piece_idx)
+            # Find best match score
+            
+        # Place the piece with highest score
+        if best_piece and best_position:
+            row, col = best_position
+            self.place_piece(best_piece, row, col)
+            self.update_frontier()
+            return True
+```
+
+## Performance Optimizations
+
+The implementation includes several optimizations for performance:
+
+- **Caching**: Results of expensive operations are cached to avoid redundant calculations
+- **Parallel Processing**: Piece processing is distributed across multiple CPU cores
+- **Numba Acceleration**: Critical numerical operations are accelerated using Numba JIT compilation
+- **Memory Management**: Large data structures are handled efficiently with appropriate cleanup
+
+## Current Results
+
+The system currently achieves:
+
+- Accurate segmentation of individual puzzle pieces
+- Reliable edge classification (straight, intrusion, extrusion)
+- Good quality edge matching with 1500+ potential matches identified
+- Partial assembly with ~16% of pieces correctly placed (4 out of 24 pieces in the test case)
+
+## Future Improvements
+
+Potential areas for improvement include:
+
+- Enhanced edge matching by incorporating more geometric features
+- Improved assembly strategy with backtracking to escape local optima
+- Implementation of machine learning for feature extraction and matching
+- Support for rotation and flipping of pieces during assembly
+
+## Usage
+
+```bash
+# Install requirements
+pip install -r requirements.txt
+
+# Run the edge matching and assembly
+python edges_matching.py
+```
 
 ## Team Members
 
