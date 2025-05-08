@@ -93,3 +93,13 @@ Potential Improvements for Edge Matching
   Both methods are significantly more powerful than simple edge type classification because they
    consider the complete geometry of the edges rather than reducing them to broad categories
   like "intrusion" or "extrusion".
+
+   Implementation Priority
+
+  1. Backtracking (High): Will immediately improve assembly by allowing recovery from suboptimal
+   placements
+  2. Dynamic Threshold (High): Easy to implement and allows progress even with uncertain matches
+  3. Multiple Starting Points (Medium): Helps find better initial configurations
+  4. Rotation Support (Medium): Important for flexibility but more complex to implement
+  5. Global Constraints (Low): More complex but provides refined placement decisions
+  6. Parallel Hypothesis Testing (Low): Valuable but requires more sophisticated implementation
