@@ -1381,6 +1381,411 @@ def create_color_feature_visualization(piece_img, vis_data_list, piece_index, ou
     plt.savefig(output_path, dpi=120)
     plt.close()
 
+# ========= ADVANCED PIECE CLASSIFICATION FUNCTIONS =========
+
+def calculate_edge_straightness(edge_points):
+    """
+    Calculate how straight an edge is (0.0 to 1.0).
+
+    Args:
+        edge_points: Liste of (x, y) edge points
+
+    Returns:
+        Straightness score between 0.0 (not straight) and 1.0 (perfectly straight)
+    """
+    # Check if we have enough points
+    if len(edge_points) < 3:
+        return 0.5  # Not enough points to determine straightness
+
+    # Convert to numpy array if it's not already
+    edge_points = np.array(edge_points)
+
+    # Fit a line to the edge points
+    vx, vy, x0, y0 = cv2.fitLine(edge_points, cv2.DIST_L2, 0, 0.01, 0.01)
+
+    # Calculate distance of each point from the line
+    distances = []
+    for point in edge_points:
+        # Calculate distance from point to line
+        distance = abs((vy * (point[0] - x0) - vx * (point[1] - y0)) /
+                       np.sqrt(vx*vx + vy*vy))
+        distances.append(distance)
+
+    # Calculate statistics
+    max_distance = max(distances) if distances else 0
+    avg_distance = sum(distances) / len(distances) if distances else 0
+
+    # Calculate edge length to normalize distances
+    if len(edge_points) > 1:
+        # Use the distance between first and last points as approximation
+        edge_length = np.linalg.norm(edge_points[-1] - edge_points[0])
+    else:
+        edge_length = 1.0  # Avoid division by zero
+
+    # Normalize by edge length to get a relative measure
+    relative_max_distance = max_distance / edge_length if edge_length > 0 else 1.0
+    relative_avg_distance = avg_distance / edge_length if edge_length > 0 else 1.0
+
+    # Combine into a single score (0 = very curved, 1 = perfectly straight)
+    straightness = 1.0 - min(1.0, (relative_max_distance * 0.7 + relative_avg_distance * 0.3))
+
+    return straightness
+
+def validate_corner_angle(edge1_points, edge2_points):
+    """
+    Validate that two edges form a corner with approximately right angle.
+
+    Args:
+        edge1_points: Liste of (x, y) points for first edge
+        edge2_points: Liste of (x, y) points for second edge
+
+    Returns:
+        Tuple (is_right_angle, angle_degrees)
+    """
+    # Check if we have enough points
+    if len(edge1_points) < 2 or len(edge2_points) < 2:
+        return False, 0.0
+
+    # Convert to numpy arrays if they're not already
+    edge1_points = np.array(edge1_points)
+    edge2_points = np.array(edge2_points)
+
+    # Calculate direction vectors for the edges
+    vec1 = edge1_points[-1] - edge1_points[0]
+    vec2 = edge2_points[-1] - edge2_points[0]
+
+    # Normalize vectors
+    vec1_norm = np.linalg.norm(vec1)
+    vec2_norm = np.linalg.norm(vec2)
+
+    if vec1_norm == 0 or vec2_norm == 0:
+        return False, 0.0
+
+    vec1 = vec1 / vec1_norm
+    vec2 = vec2 / vec2_norm
+
+    # Calculate the angle between the vectors (dot product)
+    dot_product = np.dot(vec1, vec2)
+    angle = np.arccos(np.clip(dot_product, -1.0, 1.0))
+    angle_degrees = np.degrees(angle)
+
+    # Check if angle is approximately 90 degrees (with tolerance)
+    is_right_angle = abs(angle_degrees - 90) < 20
+
+    return is_right_angle, angle_degrees
+
+def classify_corner_type(piece_data):
+    """
+    Classify the corner type (top-left, top-right, bottom-left, bottom-right).
+
+    Args:
+        piece_data: Piece data dictionary containing edge information
+
+    Returns:
+        Corner type as string: "top_left", "top_right", "bottom_left", "bottom_right" or "unknown"
+    """
+    if 'edge_types' not in piece_data or 'edge_points' not in piece_data:
+        return "unknown"
+
+    # Find the indices of straight edges
+    straight_edge_indices = [i for i, edge_type in enumerate(piece_data['edge_types'])
+                           if edge_type == "straight"]
+
+    if len(straight_edge_indices) < 2:
+        return "unknown"  # Not a corner
+
+    # We need to determine the orientation of straight edges
+    # This is a simplified approach; in a real puzzle, we would need
+    # to consider the global orientation of the puzzle
+
+    # Get direction vectors for the straight edges
+    directions = []
+    for edge_idx in straight_edge_indices:
+        edge_points = piece_data['edge_points'][edge_idx]
+        if len(edge_points) < 2:
+            continue
+
+        # Get normalized direction vector
+        start, end = edge_points[0], edge_points[-1]
+        direction = np.array([end[0] - start[0], end[1] - start[1]])
+        norm = np.linalg.norm(direction)
+        if norm > 0:
+            direction = direction / norm
+        directions.append(direction)
+
+    if len(directions) < 2:
+        return "unknown"
+
+    # Calculate angles of each direction with respect to the positive x-axis
+    angles = []
+    for direction in directions:
+        angle = np.arctan2(direction[1], direction[0])
+        angles.append(angle)
+
+    # Convert to degrees for easier interpretation
+    angles_deg = [np.degrees(angle) % 360 for angle in angles]
+
+    # Determine corner type based on the angles
+    # This is a simplified heuristic and can be improved
+    sorted_angles = sorted(angles_deg)
+    angle_diff = (sorted_angles[1] - sorted_angles[0]) % 360
+
+    # Check if the angle difference is approximately 90 degrees
+    if abs(angle_diff - 90) > 20:
+        return "unknown"  # Not a 90-degree corner
+
+    # Classify corner type based on angle combinations
+    # These thresholds can be tuned based on your specific puzzle
+    if (0 <= sorted_angles[0] <= 45 and 45 <= sorted_angles[1] <= 135):
+        return "top_left"
+    elif (45 <= sorted_angles[0] <= 135 and 135 <= sorted_angles[1] <= 225):
+        return "top_right"
+    elif (135 <= sorted_angles[0] <= 225 and 225 <= sorted_angles[1] <= 315):
+        return "bottom_right"
+    elif ((225 <= sorted_angles[0] <= 315 and 315 <= sorted_angles[1] <= 360) or
+          (225 <= sorted_angles[0] <= 315 and 0 <= sorted_angles[1] <= 45)):
+        return "bottom_left"
+    else:
+        return "unknown"
+
+def classify_puzzle_pieces_refined(piece_results):
+    """
+    Refined classification of puzzle pieces with confidence scores and corner types.
+
+    Args:
+        piece_results: List of processed piece data with edge information
+
+    Returns:
+        Dictionary {piece_idx: {"category": category, "confidence": confidence, "type": corner_type}}
+    """
+    piece_categories = {}
+
+    for piece_idx, piece_data in enumerate(piece_results):
+        if 'edge_types' not in piece_data or 'edge_points' not in piece_data:
+            piece_categories[piece_idx] = {
+                "category": "regular",
+                "confidence": 0.5,
+                "type": "unknown"
+            }
+            continue
+
+        # Calculate straightness scores for all edges
+        edge_straightness = []
+        for edge_points in piece_data['edge_points']:
+            straightness = calculate_edge_straightness(edge_points)
+            edge_straightness.append(straightness)
+
+        # Find edges with high straightness scores
+        straight_edge_indices = [i for i, score in enumerate(edge_straightness) if score > 0.8]
+        straight_edges_count = len(straight_edge_indices)
+
+        # Calculate average straightness of straight edges as confidence
+        avg_straightness = np.mean([edge_straightness[i] for i in straight_edge_indices]) if straight_edge_indices else 0
+
+        # Validate corners by checking angles between straight edges
+        is_valid_corner = False
+        corner_angle = 0
+
+        if straight_edges_count >= 2:
+            # Check pairs of straight edges to find a valid corner
+            from itertools import combinations
+            for i, j in combinations(straight_edge_indices, 2):
+                is_right, angle = validate_corner_angle(
+                    piece_data['edge_points'][i],
+                    piece_data['edge_points'][j]
+                )
+                if is_right:
+                    is_valid_corner = True
+                    corner_angle = angle
+                    break
+
+        # Classify with confidence
+        if straight_edges_count > 1 and is_valid_corner:
+            category = "corner"
+            corner_type = classify_corner_type(piece_data)
+            confidence = avg_straightness * 0.7 + (1.0 - abs(corner_angle - 90) / 90) * 0.3
+        elif straight_edges_count == 1:
+            category = "edge"
+            corner_type = "unknown"
+            confidence = avg_straightness
+        else:
+            category = "regular"
+            corner_type = "unknown"
+            confidence = 1.0 - (max(edge_straightness) if edge_straightness else 0.5)
+
+        piece_categories[piece_idx] = {
+            "category": category,
+            "confidence": confidence,
+            "type": corner_type
+        }
+
+    return piece_categories
+
+def classify_puzzle_pieces(piece_results):
+    """
+    Classifie les pièces du puzzle en trois catégories : coins, bords et régulières.
+
+    Une pièce est:
+    - un coin si elle a plus de 1 bord droit
+    - un bord si elle a exactement 1 bord droit
+    - régulière autrement
+
+    Args:
+        piece_results: Liste des résultats de traitement des pièces avec leurs types de bords
+
+    Returns:
+        Dictionnaire de classification {piece_idx: "corner"|"edge"|"regular"}
+    """
+    piece_categories = {}
+
+    for piece_idx, piece_data in enumerate(piece_results):
+        if 'edge_types' not in piece_data:
+            # Si les types de bords ne sont pas disponibles, on considère la pièce comme régulière
+            piece_categories[piece_idx] = "regular"
+            continue
+
+        # Compter les bords droits
+        edge_types = piece_data['edge_types']
+        straight_edges_count = sum(1 for edge_type in edge_types if edge_type == "straight")
+
+        # Classer selon le nombre de bords droits
+        if straight_edges_count > 1:
+            piece_categories[piece_idx] = "corner"
+        elif straight_edges_count == 1:
+            piece_categories[piece_idx] = "edge"
+        else:
+            piece_categories[piece_idx] = "regular"
+
+    return piece_categories
+
+def calculate_puzzle_dimensions(piece_categories, total_pieces):
+    """
+    Calcule les dimensions du puzzle en utilisant la formule:
+    - Total edges = (nb de pièces bord) + 2 x (nb de pièces coin)
+    - P = total edges / 4
+    - Delta = sqrt(P^2 - (total no. of pieces))
+    - Puzzle width = P + delta
+    - Puzzle height = P - delta
+
+    Args:
+        piece_categories: Dictionnaire de classification des pièces
+        total_pieces: Nombre total de pièces dans le puzzle
+
+    Returns:
+        Tuple (width, height) représentant les dimensions calculées du puzzle
+    """
+    # Compter les pièces dans chaque catégorie
+    corner_count = sum(1 for cat in piece_categories.values() if cat == "corner")
+    edge_count = sum(1 for cat in piece_categories.values() if cat == "edge")
+
+    # Calculer les dimensions selon la formule
+    total_edges = edge_count + (2 * corner_count)
+    P = total_edges / 4
+
+    # Gérer le cas où P^2 < total_pieces (problème de racine négative)
+    delta_squared = P**2 - total_pieces
+    if delta_squared < 0:
+        # En cas d'inconsistance, on utilise une valeur par défaut
+        print(f"ATTENTION: Problème avec la formule (P^2 < total_pieces). Utilisation d'un delta par défaut.")
+        delta = 0
+        width = height = math.ceil(math.sqrt(total_pieces))
+    else:
+        delta = math.sqrt(delta_squared)
+        width = math.ceil(P + delta)
+        height = math.ceil(P - delta)
+
+    return width, height
+
+def create_piece_category_visualization(piece_categories, piece_images, output_path):
+    """
+    Crée une visualisation des catégories de pièces (coins, bords, régulières).
+
+    Args:
+        piece_categories: Dictionnaire de classification des pièces
+        piece_images: Dictionnaire d'images des pièces
+        output_path: Chemin pour sauvegarder la visualisation
+    """
+    if not piece_categories or not piece_images:
+        return
+
+    # Compter les pièces dans chaque catégorie
+    corner_count = sum(1 for cat in piece_categories.values() if cat == "corner")
+    edge_count = sum(1 for cat in piece_categories.values() if cat == "edge")
+    regular_count = sum(1 for cat in piece_categories.values() if cat == "regular")
+
+    # Nombre total de pièces
+    total_pieces = len(piece_categories)
+
+    # Créer une grande image
+    max_pieces_per_row = 8
+    rows_needed = math.ceil(total_pieces / max_pieces_per_row)
+
+    # Obtenir une taille d'image de pièce typique
+    sample_img = next(iter(piece_images.values()))
+    piece_height, piece_width = sample_img.shape[:2]
+
+    # Créer une image vide
+    canvas_width = max_pieces_per_row * piece_width
+    canvas_height = (rows_needed + 3) * piece_height  # +3 pour le titre et les légendes
+    canvas = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
+
+    # Ajouter un titre
+    title = f"Classification des Pieces: {corner_count} coins, {edge_count} bords, {regular_count} regulieres"
+    cv2.putText(canvas, title, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+
+    # Dessiner des légendes colorées
+    legend_y = 60
+    cv2.rectangle(canvas, (20, legend_y), (40, legend_y+20), (0, 0, 255), -1)  # Rouge pour les coins
+    cv2.putText(canvas, "Coins", (50, legend_y+15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    cv2.rectangle(canvas, (120, legend_y), (140, legend_y+20), (0, 255, 0), -1)  # Vert pour les bords
+    cv2.putText(canvas, "Bords", (150, legend_y+15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    cv2.rectangle(canvas, (220, legend_y), (240, legend_y+20), (255, 0, 0), -1)  # Bleu pour régulières
+    cv2.putText(canvas, "Regulieres", (250, legend_y+15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+
+    # Disposer les pièces
+    start_y = 100  # Décalage pour le titre et les légendes
+    for piece_idx, category in piece_categories.items():
+        if piece_idx not in piece_images:
+            continue
+
+        img = piece_images[piece_idx].copy()
+
+        # Ajouter une bordure colorée selon la catégorie
+        border_color = (0, 0, 0)  # Noir par défaut
+        if category == "corner":
+            border_color = (0, 0, 255)  # Rouge
+        elif category == "edge":
+            border_color = (0, 255, 0)  # Vert
+        else:
+            border_color = (255, 0, 0)  # Bleu
+
+        # Ajouter une bordure épaisse
+        img = cv2.copyMakeBorder(img, 5, 5, 5, 5, cv2.BORDER_CONSTANT, value=border_color)
+
+        # Calculer la position
+        row = piece_idx // max_pieces_per_row
+        col = piece_idx % max_pieces_per_row
+
+        x = col * piece_width
+        y = start_y + row * piece_height
+
+        # Placer l'image
+        h, w = img.shape[:2]
+        try:
+            canvas[y:y+h, x:x+w] = img
+
+            # Ajouter un numéro
+            cv2.putText(canvas, str(piece_idx+1), (x+10, y+20),
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        except:
+            # En cas d'erreur de taille, continuons
+            pass
+
+    # Sauvegarder l'image
+    cv2.imwrite(output_path, canvas)
+
 # ========= EDGE MATCHING AND PUZZLE ASSEMBLY =========
 
 def normalize_edge_points(points, target_points=50, flip_for_matching=True):
@@ -2144,11 +2549,11 @@ def match_edges(piece_results, num_processes=None):
 
 class PuzzleAssembler:
     """Class to handle puzzle assembly from edge matches."""
-    
+
     def __init__(self, piece_results, edge_matches):
         """
         Initialize the puzzle assembler.
-        
+
         Args:
             piece_results: List of processed piece data
             edge_matches: List of edge matches between pieces
@@ -2156,102 +2561,178 @@ class PuzzleAssembler:
         self.piece_results = piece_results
         self.edge_matches = edge_matches
         self.num_pieces = len(piece_results)
-        
+
         # Grid for piece placement - key is (row, col) tuple, value is piece_idx
         self.grid = {}
-        
+
         # Positions of placed pieces - key is piece_idx, value is (row, col)
         self.placed_positions = {}
-        
+
         # Edges already used in connections - set of (piece_idx, edge_idx) tuples
         self.used_edges = set()
-        
+
         # Set of piece indices already placed
         self.placed_pieces = set()
-        
+
         # Set of piece indices that can potentially be placed next (frontier)
         self.frontier = set()
-        
+
         # Grid size tracking
         self.min_row = 0
         self.max_row = 0
         self.min_col = 0
         self.max_col = 0
-        
+
         # Backtracking support
         self.history = []  # Stack to keep track of placement history for backtracking
         self.dead_ends = set()  # Set of piece/position combinations that led to dead ends
         self.backtrack_count = 0  # Counter to track how many times we've backtracked
         self.max_backtrack_depth = 5  # Maximum depth to backtrack before trying a different strategy
-        
+
         # Dynamic threshold support
         self.initial_match_threshold = 0.4  # Starting match threshold
         self.min_match_threshold = 0.2  # Minimum threshold we'll accept
         self.current_match_threshold = self.initial_match_threshold  # Current threshold value
+
+        # Advanced piece classification with corner types and confidence scores
+        self.piece_categories_refined = classify_puzzle_pieces_refined(piece_results)
+
+        # Backward compatibility with old classification
+        self.piece_categories = {idx: info["category"] for idx, info in self.piece_categories_refined.items()}
+
+        # Calculate puzzle dimensions
+        width, height = calculate_puzzle_dimensions(self.piece_categories, self.num_pieces)
+        self.calculated_width = width
+        self.calculated_height = height
+
+        # For corner-type based assembly
+        self.corner_positions = {
+            "top_left": (0, 0),
+            "top_right": (0, width-1),
+            "bottom_left": (height-1, 0),
+            "bottom_right": (height-1, width-1)
+        }
+
+        # For fast lookup of corners and edges
+        self.corner_pieces = [idx for idx, info in self.piece_categories_refined.items()
+                            if info["category"] == "corner"]
+        self.edge_pieces = [idx for idx, info in self.piece_categories_refined.items()
+                          if info["category"] == "edge"]
+
+        # Sort corners and edges by confidence
+        self.corner_pieces.sort(key=lambda idx: self.piece_categories_refined[idx]["confidence"], reverse=True)
+        self.edge_pieces.sort(key=lambda idx: self.piece_categories_refined[idx]["confidence"], reverse=True)
+
+        print(f"Puzzle dimensions calculées: {width}x{height}")
+
+        # Count pieces by type with refined classification
+        corner_count = sum(1 for info in self.piece_categories_refined.values() if info["category"] == "corner")
+        edge_count = sum(1 for info in self.piece_categories_refined.values() if info["category"] == "edge")
+        regular_count = sum(1 for info in self.piece_categories_refined.values() if info["category"] == "regular")
+
+        print(f"Classification des pièces: {corner_count} coins, {edge_count} bords, {regular_count} régulières")
+
+        # Print corner types
+        corner_types = {idx: info["type"] for idx, info in self.piece_categories_refined.items()
+                      if info["category"] == "corner" and info["type"] != "unknown"}
+        if corner_types:
+            print(f"Types de coins détectés: {corner_types}")
     
     def start_assembly(self, seed_piece_idx=None):
         """
         Start the assembly by placing the first piece.
-        
+
         Args:
             seed_piece_idx: Optional specific piece to use as the seed (None = auto-select)
-            
+
         Returns:
             Boolean indicating success
         """
         if not self.edge_matches or not self.piece_results:
             print("No pieces or matches to assemble.")
             return False
-        
-        # If no specific seed piece provided, choose the best one
+
+        # If no specific seed piece provided, look for a corner piece first
         if seed_piece_idx is None:
-            # Choose seed piece - take the one with the most high-quality matches
-            piece_match_counts = {}
-            piece_match_scores = {}
-            
-            # Consider a larger number of matches
-            for match in self.edge_matches[:min(len(self.edge_matches), 300)]:
-                piece1_idx = match['piece1_idx']
-                piece2_idx = match['piece2_idx']
-                score = match['total_score']
-                
-                # Count occurrences
-                if piece1_idx not in piece_match_counts:
-                    piece_match_counts[piece1_idx] = 0
-                    piece_match_scores[piece1_idx] = 0
-                if piece2_idx not in piece_match_counts:
-                    piece_match_counts[piece2_idx] = 0
-                    piece_match_scores[piece2_idx] = 0
-                    
-                piece_match_counts[piece1_idx] += 1
-                piece_match_counts[piece2_idx] += 1
-                
-                # Also sum up scores
-                piece_match_scores[piece1_idx] += score
-                piece_match_scores[piece2_idx] += score
-            
-            # Choose piece with best combination of count and score
-            seed_candidates = {}
-            for piece_idx in piece_match_counts:
-                seed_candidates[piece_idx] = piece_match_counts[piece_idx] * piece_match_scores[piece_idx]
-                
-            # Choose piece with highest combined score
-            seed_piece_idx = max(seed_candidates.items(), key=lambda x: x[1])[0] if seed_candidates else 0
-            print(f"Selected seed piece: {seed_piece_idx+1} with {piece_match_counts.get(seed_piece_idx, 0)} matches")
+            # Chercher d'abord parmi les pièces de coin
+            corner_pieces = [idx for idx, cat in self.piece_categories.items()
+                           if cat == "corner"]
+
+            if corner_pieces:
+                # Si on a des coins, commençons par un coin
+                corner_match_scores = {}
+
+                # Calculer un score pour chaque coin
+                for piece_idx in corner_pieces:
+                    # Compter les matches pour cette pièce
+                    match_count = 0
+                    match_score_sum = 0
+
+                    for match in self.edge_matches[:min(len(self.edge_matches), 300)]:
+                        if match['piece1_idx'] == piece_idx or match['piece2_idx'] == piece_idx:
+                            match_count += 1
+                            match_score_sum += match['total_score']
+
+                    if match_count > 0:
+                        corner_match_scores[piece_idx] = match_count * match_score_sum
+
+                # Choisir le coin avec le meilleur score
+                if corner_match_scores:
+                    seed_piece_idx = max(corner_match_scores.items(), key=lambda x: x[1])[0]
+                    print(f"Selected corner piece: {seed_piece_idx+1} as seed")
+                else:
+                    # Si aucun coin n'a de correspondances, prendre simplement le premier coin
+                    seed_piece_idx = corner_pieces[0]
+                    print(f"Selected first corner piece: {seed_piece_idx+1} as seed (no matches found)")
+            else:
+                # Pas de coins identifiés, revenir à la méthode originale basée uniquement sur les matches
+                # Choose seed piece - take the one with the most high-quality matches
+                piece_match_counts = {}
+                piece_match_scores = {}
+
+                # Consider a larger number of matches
+                for match in self.edge_matches[:min(len(self.edge_matches), 300)]:
+                    piece1_idx = match['piece1_idx']
+                    piece2_idx = match['piece2_idx']
+                    score = match['total_score']
+
+                    # Count occurrences
+                    if piece1_idx not in piece_match_counts:
+                        piece_match_counts[piece1_idx] = 0
+                        piece_match_scores[piece1_idx] = 0
+                    if piece2_idx not in piece_match_counts:
+                        piece_match_counts[piece2_idx] = 0
+                        piece_match_scores[piece2_idx] = 0
+
+                    piece_match_counts[piece1_idx] += 1
+                    piece_match_counts[piece2_idx] += 1
+
+                    # Also sum up scores
+                    piece_match_scores[piece1_idx] += score
+                    piece_match_scores[piece2_idx] += score
+
+                # Choose piece with best combination of count and score
+                seed_candidates = {}
+                for piece_idx in piece_match_counts:
+                    seed_candidates[piece_idx] = piece_match_counts[piece_idx] * piece_match_scores[piece_idx]
+
+                # Choose piece with highest combined score
+                seed_piece_idx = max(seed_candidates.items(), key=lambda x: x[1])[0] if seed_candidates else 0
+                print(f"Selected seed piece: {seed_piece_idx+1} with {piece_match_counts.get(seed_piece_idx, 0)} matches")
         else:
             print(f"Using specified seed piece: {seed_piece_idx+1}")
-        
+
         # Check if this piece is valid
         if seed_piece_idx < 0 or seed_piece_idx >= self.num_pieces:
             print(f"Invalid seed piece index: {seed_piece_idx}")
             return False
-        
+
         # Place seed piece at (0, 0)
         self.place_piece(seed_piece_idx, 0, 0)
-        
+
         # Add neighboring pieces to frontier
         self.update_frontier()
-        
+
         return True
     
     def place_piece(self, piece_idx, row, col, edge_match=None, track_history=True):
@@ -2651,45 +3132,74 @@ class PuzzleAssembler:
                 
         return False
     
-    def find_seed_candidates(self, num_candidates=5):
+    def find_seed_candidates(self, num_candidates=5, candidate_set=None):
         """
         Find the best seed piece candidates based on match quality.
-        
+
         Args:
             num_candidates: Number of candidates to return
-            
+            candidate_set: Optional set of piece indices to consider (e.g., only corners)
+
         Returns:
             List of piece indices to try as seeds, sorted by potential
         """
         piece_match_counts = {}
         piece_match_scores = {}
-        
+
         # Consider a larger number of matches
         for match in self.edge_matches[:min(len(self.edge_matches), 300)]:
             piece1_idx = match['piece1_idx']
             piece2_idx = match['piece2_idx']
             score = match['total_score']
-            
-            # Count occurrences
-            if piece1_idx not in piece_match_counts:
-                piece_match_counts[piece1_idx] = 0
-                piece_match_scores[piece1_idx] = 0
-            if piece2_idx not in piece_match_counts:
-                piece_match_counts[piece2_idx] = 0
-                piece_match_scores[piece2_idx] = 0
-                
-            piece_match_counts[piece1_idx] += 1
-            piece_match_counts[piece2_idx] += 1
-            
-            # Also sum up scores
-            piece_match_scores[piece1_idx] += score
-            piece_match_scores[piece2_idx] += score
-        
+
+            # Ne considérer que les pièces dans candidate_set si spécifié
+            if candidate_set is not None:
+                if piece1_idx not in candidate_set and piece2_idx not in candidate_set:
+                    continue
+
+                # Si un seul des deux est dans candidate_set, ne compter que celui-là
+                if piece1_idx not in candidate_set:
+                    piece1_idx = None
+                if piece2_idx not in candidate_set:
+                    piece2_idx = None
+
+            # Count occurrences pour piece1
+            if piece1_idx is not None:
+                if piece1_idx not in piece_match_counts:
+                    piece_match_counts[piece1_idx] = 0
+                    piece_match_scores[piece1_idx] = 0
+                piece_match_counts[piece1_idx] += 1
+                piece_match_scores[piece1_idx] += score
+
+            # Count occurrences pour piece2
+            if piece2_idx is not None:
+                if piece2_idx not in piece_match_counts:
+                    piece_match_counts[piece2_idx] = 0
+                    piece_match_scores[piece2_idx] = 0
+                piece_match_counts[piece2_idx] += 1
+                piece_match_scores[piece2_idx] += score
+
         # Choose pieces with best combination of count and score
         seed_candidates = {}
+
+        # Si un ensemble de candidats est fourni mais qu'aucun n'a de correspondance
+        if candidate_set is not None and not piece_match_counts:
+            # Retourner simplement les n premiers candidats fournis
+            return list(candidate_set)[:num_candidates]
+
         for piece_idx in piece_match_counts:
-            seed_candidates[piece_idx] = piece_match_counts[piece_idx] * piece_match_scores[piece_idx]
-            
+            # Accorder un bonus aux pièces selon leur catégorie
+            category_bonus = 1.0
+            if piece_idx in self.piece_categories:
+                if self.piece_categories[piece_idx] == "corner":
+                    category_bonus = 1.3  # Bonus pour les coins
+                elif self.piece_categories[piece_idx] == "edge":
+                    category_bonus = 1.1  # Petit bonus pour les bords
+
+            seed_candidates[piece_idx] = (piece_match_counts[piece_idx] *
+                                         piece_match_scores[piece_idx] *
+                                         category_bonus)
+
         # Sort by score and return top candidates
         sorted_candidates = sorted(seed_candidates.items(), key=lambda x: x[1], reverse=True)
         return [c[0] for c in sorted_candidates[:num_candidates]]
@@ -2714,46 +3224,164 @@ class PuzzleAssembler:
         
         return True
     
+    def assemble_puzzle_with_corner_types(self):
+        """
+        Assemble the puzzle using corner type information for better placement.
+
+        Returns:
+            Dictionary with assembly results
+        """
+        print("Starting puzzle assembly with corner types...")
+
+        # First, try to establish a framework with known corner types
+        corner_framework = {}
+        for corner_type, position in self.corner_positions.items():
+            matching_corners = [
+                idx for idx in self.corner_pieces
+                if self.piece_categories_refined[idx]["type"] == corner_type
+            ]
+
+            if matching_corners:
+                # Use the highest confidence corner of this type
+                matching_corners.sort(
+                    key=lambda idx: self.piece_categories_refined[idx]["confidence"],
+                    reverse=True
+                )
+                corner_framework[corner_type] = matching_corners[0]
+
+        # If we have a good framework with at least 2 corners, use them as starting points
+        if len(corner_framework) >= 2:
+            print(f"Found framework with {len(corner_framework)} typed corners: {corner_framework}")
+
+            # Start with framework assembly
+            self.reset_assembly()
+
+            # Place the corners in their correct positions
+            for corner_type, piece_idx in corner_framework.items():
+                row, col = self.corner_positions[corner_type]
+                placed = self.place_piece(piece_idx, row, col)
+                if placed:
+                    print(f"Placed {corner_type} corner ({piece_idx+1}) at position ({row}, {col})")
+                else:
+                    print(f"Failed to place {corner_type} corner ({piece_idx+1})")
+
+            # Update frontier with potential next pieces
+            self.update_frontier()
+
+            # Now assemble the rest of the puzzle
+            pieces_placed = len(corner_framework)
+            iterations = 0
+            max_iterations = self.num_pieces * 4
+
+            while pieces_placed < self.num_pieces and iterations < max_iterations:
+                success = self.assemble_next_piece()
+                if success:
+                    current_placed = len(self.placed_pieces)
+                    if current_placed > pieces_placed:
+                        print(f"Placed piece {current_placed}/{self.num_pieces}")
+                    pieces_placed = current_placed
+                else:
+                    print(f"Could not place more pieces after {pieces_placed}/{self.num_pieces}")
+                    break
+                iterations += 1
+
+            # Calculate grid dimensions
+            grid_height = self.max_row - self.min_row + 1
+            grid_width = self.max_col - self.min_col + 1
+
+            # Validate against calculated dimensions
+            dimension_match = self.is_dimension_match(grid_width, grid_height)
+
+            print(f"Framework-based assembly complete. Placed {pieces_placed}/{self.num_pieces} pieces.")
+            print(f"Puzzle dimensions: {grid_width}x{grid_height}, " +
+                  ("matches" if dimension_match else "differs from") +
+                  f" calculated {self.calculated_width}x{self.calculated_height}")
+
+            # Return assembly results
+            return {
+                "success": pieces_placed > 0,
+                "pieces_placed": pieces_placed,
+                "total_pieces": self.num_pieces,
+                "grid": dict(self.grid),
+                "placed_positions": dict(self.placed_positions),
+                "dimensions": (grid_width, grid_height),
+                "bounds": (self.min_row, self.min_col, self.max_row, self.max_col),
+                "dimension_match": dimension_match,
+                "calculated_dimensions": (self.calculated_width, self.calculated_height),
+                "assembly_method": "framework"
+            }
+
+        # If framework approach didn't fully succeed or we don't have enough typed corners,
+        # fall back to regular assembly
+        print("Not enough typed corners for framework assembly, falling back to normal assembly...")
+        return self.assemble_puzzle(True, 3)
+
+    def is_dimension_match(self, grid_width, grid_height):
+        """Check if the current grid dimensions match the calculated dimensions."""
+        if not (self.calculated_width and self.calculated_height):
+            return False
+
+        return ((grid_width == self.calculated_width and grid_height == self.calculated_height) or
+                (grid_width == self.calculated_height and grid_height == self.calculated_width))
+
     def assemble_puzzle(self, try_multiple_starts=True, max_start_attempts=3):
         """
         Assemble the complete puzzle.
-        
+
         Args:
             try_multiple_starts: Whether to try multiple starting pieces
             max_start_attempts: Maximum number of different starting pieces to try
-            
+
         Returns:
             Dictionary with assembly results
         """
         print("Starting puzzle assembly...")
-        
+
         best_assembly = None
         best_pieces_placed = 0
-        
+
         # Get seed candidates if using multiple starts
         seed_candidates = [None]  # Default will use automatic selection
         if try_multiple_starts:
-            seed_candidates = self.find_seed_candidates(num_candidates=max_start_attempts)
-            print(f"Will try {len(seed_candidates)} different starting pieces")
-        
+            # Utiliser d'abord les coins comme candidats
+            corner_pieces = [idx for idx, cat in self.piece_categories.items()
+                           if cat == "corner"]
+
+            if corner_pieces and len(corner_pieces) <= max_start_attempts:
+                # Si on a assez de coins, essayons-les tous
+                seed_candidates = corner_pieces
+                print(f"Will try all {len(seed_candidates)} corner pieces as seeds")
+            elif corner_pieces:
+                # Sinon, sélectionner un sous-ensemble de coins
+                best_corner_candidates = self.find_seed_candidates(
+                    num_candidates=max_start_attempts,
+                    candidate_set=corner_pieces
+                )
+                seed_candidates = best_corner_candidates
+                print(f"Will try {len(seed_candidates)} best corner pieces as seeds")
+            else:
+                # Pas de coins, utiliser la méthode originale
+                seed_candidates = self.find_seed_candidates(num_candidates=max_start_attempts)
+                print(f"Will try {len(seed_candidates)} different starting pieces (no corners found)")
+
         # Try each seed candidate
         for attempt, seed_piece in enumerate(seed_candidates):
             if attempt > 0:
                 # Reset for a new attempt
                 print(f"\nTrying alternate starting piece {seed_piece+1}...")
                 self.reset_assembly()
-            
+
             # Place the first piece (automatic or specified)
             success = self.start_assembly(seed_piece)
             if not success:
                 print(f"Failed to start assembly with seed piece {seed_piece+1 if seed_piece is not None else 'auto'}.")
                 continue
-            
+
             # Keep track of pieces placed
             pieces_placed = 1
             iterations = 0
             max_iterations = self.num_pieces * 3  # Increased for backtracking
-            
+
             # Assemble pieces until no more can be placed or all are placed
             while pieces_placed < self.num_pieces and iterations < max_iterations:
                 success = self.assemble_next_piece()
@@ -2767,17 +3395,33 @@ class PuzzleAssembler:
                     print(f"Could not place more pieces after {pieces_placed}/{self.num_pieces}")
                     break
                 iterations += 1
-            
+
             # Calculate grid dimensions
             grid_height = self.max_row - self.min_row + 1
             grid_width = self.max_col - self.min_col + 1
-            
+
             print(f"Assembly attempt {attempt+1} complete. Placed {pieces_placed}/{self.num_pieces} pieces.")
             print(f"Puzzle dimensions: {grid_width}x{grid_height}")
-            
+
+            # Vérifier si les dimensions correspondent aux dimensions calculées
+            dimension_match = False
+            if self.calculated_width and self.calculated_height:
+                # Vérifier si les dimensions correspondent (dans un sens ou dans l'autre)
+                if (grid_width == self.calculated_width and grid_height == self.calculated_height) or \
+                   (grid_width == self.calculated_height and grid_height == self.calculated_width):
+                    dimension_match = True
+                    print(f"✓ Assembled dimensions match calculated dimensions!")
+                else:
+                    print(f"⚠ Assembled dimensions {grid_width}x{grid_height} differ from calculated {self.calculated_width}x{self.calculated_height}")
+
+            # Calculer un score pour cette assemblage (basé sur les pièces placées et la correspondance des dimensions)
+            assembly_score = pieces_placed
+            if dimension_match:
+                assembly_score *= 1.2  # Bonus pour correspondance des dimensions
+
             # Save this assembly if it's the best so far
-            if pieces_placed > best_pieces_placed:
-                best_pieces_placed = pieces_placed
+            if assembly_score > best_pieces_placed:
+                best_pieces_placed = assembly_score
                 best_assembly = {
                     "success": pieces_placed > 0,
                     "pieces_placed": pieces_placed,
@@ -2786,14 +3430,16 @@ class PuzzleAssembler:
                     "placed_positions": dict(self.placed_positions),
                     "dimensions": (grid_width, grid_height),
                     "bounds": (self.min_row, self.min_col, self.max_row, self.max_col),
-                    "seed_piece": seed_piece
+                    "seed_piece": seed_piece,
+                    "dimension_match": dimension_match,
+                    "calculated_dimensions": (self.calculated_width, self.calculated_height)
                 }
-                
+
                 # If we've placed all pieces, no need to try more seeds
                 if pieces_placed == self.num_pieces:
                     print("Found a complete solution!")
                     break
-            
+
         # Restore the best assembly if we tried multiple
         if try_multiple_starts and best_assembly and best_assembly["seed_piece"] != seed_candidates[0]:
             print(f"\nRestoring best assembly (placed {best_assembly['pieces_placed']}/{self.num_pieces} pieces)...")
@@ -3387,15 +4033,68 @@ def main():
             
         print(f"Created visualization for {min(30, len(edge_matches))} top matches in {matching_dir}/")
     
-    # Assemble the puzzle
+    # Créer une visualisation des catégories de pièces
+    with Timer("Classification des pièces"):
+        # Classifier les pièces (coins, bords, régulières)
+        piece_categories = classify_puzzle_pieces(results)
+
+        # Calculer les dimensions du puzzle
+        width, height = calculate_puzzle_dimensions(piece_categories, len(pieces))
+        print(f"Dimensions calculées du puzzle: {width}x{height}")
+
+        # Afficher un résumé de la classification
+        corner_count = sum(1 for cat in piece_categories.values() if cat == "corner")
+        edge_count = sum(1 for cat in piece_categories.values() if cat == "edge")
+        regular_count = sum(1 for cat in piece_categories.values() if cat == "regular")
+
+        print(f"Classification des pièces: {corner_count} coins, {edge_count} bords, {regular_count} régulières")
+
+        # Créer une visualisation des catégories
+        categories_vis_path = os.path.join(dirs['edge_types'], "piece_categories.png")
+        create_piece_category_visualization(piece_categories, piece_images, categories_vis_path)
+
+    # Créer une visualisation des catégories de pièces
+    with Timer("Classification des pièces"):
+        # Classifier les pièces avec le nouveau système raffiné
+        piece_categories_refined = classify_puzzle_pieces_refined(results)
+
+        # Calculer les dimensions du puzzle
+        width, height = calculate_puzzle_dimensions(
+            {idx: info["category"] for idx, info in piece_categories_refined.items()},
+            len(results)
+        )
+        print(f"Dimensions calculées du puzzle: {width}x{height}")
+
+        # Afficher un résumé de la classification
+        corner_count = sum(1 for info in piece_categories_refined.values() if info["category"] == "corner")
+        edge_count = sum(1 for info in piece_categories_refined.values() if info["category"] == "edge")
+        regular_count = sum(1 for info in piece_categories_refined.values() if info["category"] == "regular")
+
+        print(f"Classification des pièces: {corner_count} coins, {edge_count} bords, {regular_count} régulières")
+
+        # Afficher les types de coins détectés
+        corner_types = {idx: info["type"] for idx, info in piece_categories_refined.items()
+                      if info["category"] == "corner" and info["type"] != "unknown"}
+        if corner_types:
+            print(f"Types de coins détectés: {corner_types}")
+
+        # Créer une visualisation des catégories
+        categories_vis_path = os.path.join(dirs['edge_types'], "piece_categories.png")
+        create_piece_category_visualization(
+            {idx: info["category"] for idx, info in piece_categories_refined.items()},
+            piece_images,
+            categories_vis_path
+        )
+
+    # Assemble the puzzle with enhanced corner type information
     with Timer("Puzzle assembly"):
         assembler = PuzzleAssembler(results, edge_matches)
-        assembly_result = assembler.assemble_puzzle()
-        
+        assembly_result = assembler.assemble_puzzle_with_corner_types()
+
         # Create assembly visualization directory
         assembly_dir = os.path.join(dirs['edge_types'], "assembly")
         os.makedirs(assembly_dir, exist_ok=True)
-        
+
         # Load piece images for visualization (if available)
         piece_images = {}
         for result in results:
@@ -3405,21 +4104,28 @@ def main():
                 piece_img = cv2.imread(piece_path)
                 if piece_img is not None:
                     piece_images[piece_idx] = piece_img
-        
+
         # Visualize the assembly
         viz_path = os.path.join(assembly_dir, "puzzle_assembly.png")
         assembler.visualize_assembly(viz_path, piece_images)
-        
+
         # Save assembly data
         assembly_data_path = os.path.join(assembly_dir, "assembly_data.txt")
         with open(assembly_data_path, 'w') as f:
             f.write(f"Puzzle Assembly Results:\n")
             f.write(f"Pieces placed: {assembly_result['pieces_placed']}/{assembly_result['total_pieces']}\n")
-            f.write(f"Puzzle dimensions: {assembly_result['dimensions'][0]}x{assembly_result['dimensions'][1]}\n\n")
-            
+            f.write(f"Puzzle dimensions: {assembly_result['dimensions'][0]}x{assembly_result['dimensions'][1]}\n")
+            f.write(f"Calculated dimensions: {width}x{height}\n\n")
+
+            f.write("Piece Categories:\n")
+            f.write(f"Corners: {corner_count}\n")
+            f.write(f"Edges: {edge_count}\n")
+            f.write(f"Regular: {regular_count}\n\n")
+
             f.write("Piece Placements:\n")
             for piece_idx, (row, col) in assembler.placed_positions.items():
-                f.write(f"Piece {piece_idx+1}: Position ({row}, {col})\n")
+                category = piece_categories.get(piece_idx, "unknown")
+                f.write(f"Piece {piece_idx+1} ({category}): Position ({row}, {col})\n")
     
     print("Processing completed!")
     print(f"All output saved to subdirectories in debug/")
