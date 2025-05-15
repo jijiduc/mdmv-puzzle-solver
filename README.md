@@ -374,146 +374,9 @@ def calculate_color_compatibility(color_feature1, color_feature2):
     final_score = 0.6 * color_score + 0.4 * mean_score
 ```
 
-#### Advanced Edge Matching
+#### Advanced Edge Matching with DTW
 
-To improve edge matching accuracy, we've implemented advanced shape analysis techniques that provide more sophisticated geometric matching beyond simple edge type classification:
-
-1. **Procrustes Analysis**
-   - Determines the optimal alignment between two edge contours
-   - Finds the translation, rotation, and scaling that minimizes the difference between edges
-   - Provides a similarity score based on how well edges align after transformation
-   - Particularly effective for matching complex shape features
-
-```python
-def calculate_procrustes_similarity(points1, points2):
-    # Center both point sets
-    centroid1 = np.mean(points1, axis=0)
-    centroid2 = np.mean(points2, axis=0)
-    centered1 = points1 - centroid1
-    centered2 = points2 - centroid2
-    
-    # Find optimal rotation using SVD
-    correlation_matrix = centered1.T @ centered2
-    U, s, Vt = linalg.svd(correlation_matrix)
-    rotation = U @ Vt
-    
-    # Calculate residual after alignment
-    aligned = centered1 @ rotation
-    residual = np.sum((aligned - centered2)**2)
-    
-    # Convert to similarity score
-    similarity_score = 1.0 - min(1.0, residual / max_possible_residual)
-    return similarity_score
-```
-
-2. **Hausdorff Distance**
-   - Measures the maximum minimum distance between two edge contours
-   - Quantifies how far two shapes differ from each other
-   - Robust to local shape variations and minor misalignments
-   - Provides a detailed measure of shape differences that categorical classification misses
-
-```python
-def calculate_hausdorff_distance(points1, points2):
-    # Calculate pairwise distances
-    distances = np.sqrt(d1 + d2[:, np.newaxis] - 2 * np.dot(points2, points1.T))
-    
-    # Forward Hausdorff: min distance from each point in points1 to any point in points2
-    d1_to_2 = np.max(np.min(distances.T, axis=1))
-    
-    # Backward Hausdorff: min distance from each point in points2 to any point in points1
-    d2_to_1 = np.max(np.min(distances, axis=1))
-    
-    # Hausdorff distance is the maximum of the two
-    return max(d1_to_2, d2_to_1)
-```
-
-3. **Adaptive Color Weighting**
-   - Analyzes color distinctiveness to determine appropriate shape/color balance
-   - Gives more weight to color when edges have distinctive color patterns
-   - Relies more on shape when colors are uniform or similar
-   - Adapts to each edge pair's characteristics for optimal matching
-
-4. **Multi-stage Matching Pipeline**
-   - Uses fast type-based compatibility as an initial filter
-   - Applies computationally intensive geometric analysis only to promising matches
-   - Combines multiple matching strategies with weighted scoring
-   - Gracefully falls back to basic matching when advanced analysis isn't applicable
-
-```python
-def enhanced_edge_compatibility(edge1_points, edge2_points, edge1_type, edge1_deviation, 
-                              edge2_type, edge2_deviation, edge1_colors, edge2_colors):
-    # Basic shape and color scores
-    basic_shape_score = calculate_shape_compatibility(edge1_type, edge1_deviation, edge2_type, edge2_deviation)
-    color_score = calculate_color_compatibility(edge1_colors, edge2_colors)
-    
-    # Skip advanced analysis for unlikely matches
-    if basic_shape_score < 0.2:
-        return basic_shape_score * 0.7 + color_score * 0.3
-    
-    # Advanced shape analysis
-    procrustes_score = calculate_procrustes_similarity(edge1_normalized, edge2_normalized)
-    hausdorff_dist = calculate_hausdorff_distance(edge1_normalized, edge2_normalized)
-    hausdorff_score = 1.0 - min(1.0, hausdorff_dist / max_distance)
-    
-    # Adaptive color weighting based on color distinctiveness
-    color_distinctiveness = analyze_color_distinctiveness(edge1_colors)
-    color_weight = adaptive_weight_based_on_distinctiveness(color_distinctiveness)
-    
-    # Combine shape scores from different methods
-    combined_shape_score = (0.4 * basic_shape_score + 
-                           0.35 * procrustes_score + 
-                           0.25 * hausdorff_score)
-    
-    # Final weighted score
-    return (1 - color_weight) * combined_shape_score + color_weight * color_score
-```
-
-These advanced techniques significantly improve matching accuracy, particularly for complex edge shapes and pieces with distinctive color patterns.
-
-### 5. Puzzle Assembly
-
-The final phase assembles the puzzle based on the matched edges:
-
-- Represents the puzzle as a grid where pieces can be placed
-- Starts with a seed piece (the one with most high-quality matches)
-- Maintains a frontier of candidate pieces that could be placed next
-- Iteratively places the piece with the highest match score
-- Handles the spatial arrangement of pieces based on edge orientations
-
-```python
-class PuzzleAssembler:
-    def start_assembly(self):
-        # Choose seed piece with most high-quality matches
-        seed_piece_idx = max(seed_candidates.items(), key=lambda x: x[1])[0]
-        self.place_piece(seed_piece_idx, 0, 0)
-        self.update_frontier()
-    
-    def assemble_next_piece(self):
-        # Find best piece to place next
-        for piece_idx in self.frontier:
-            position, edge_match = self.determine_piece_position(piece_idx)
-            # Find best match score
-            
-        # Place the piece with highest score
-        if best_piece and best_position:
-            row, col = best_position
-            self.place_piece(best_piece, row, col)
-            self.update_frontier()
-            return True
-```
-
-## Performance Optimizations
-
-The implementation includes several optimizations for performance:
-
-- **Caching**: Results of expensive operations are cached to avoid redundant calculations
-- **Parallel Processing**: Piece processing is distributed across multiple CPU cores
-- **Numba Acceleration**: Critical numerical operations are accelerated using Numba JIT compilation
-- **Memory Management**: Large data structures are handled efficiently with appropriate cleanup
-
-### 6. DTW-based Color Matching
-
-To improve color matching precision, we've implemented Dynamic Time Warping (DTW) for comparing color sequences along edges:
+A key enhancement to edge matching is the implementation of Dynamic Time Warping (DTW) for comparing color sequences along edges:
 
 1. **Direct Color Sequence Extraction**:
    - Instead of aggregating colors into histograms, we extract the precise sequence of colors along each edge
@@ -586,244 +449,113 @@ def dtw_color_matching(sequence1, sequence2, confidence1=None, confidence2=None)
 
 DTW color matching significantly improves matching accuracy by preserving the spatial arrangement of colors along puzzle piece edges, leading to more precise matching than histogram-based approaches.
 
-## Enhanced Puzzle Assembly
+### 5. Puzzle Assembly
 
-The puzzle assembly phase now includes several advanced features for more robust and accurate assembly:
+The final phase assembles the puzzle based on the matched edges:
 
-### 1. Backtracking Assembly
-
-Backtracking capability allows the assembler to recover from suboptimal placements and explore alternative solution paths:
-
-- Maintains history of piece placements for potential reversal
-- Intelligently removes pieces when reaching a dead end
-- Tracks dead-end configurations to avoid repeating mistakes
-- Limits backtracking depth to control exploration vs. exploitation
-- Reset and restart capability for optimal solution search
+- Represents the puzzle as a grid where pieces can be placed
+- Starts with a seed piece (the one with most high-quality matches)
+- Maintains a frontier of candidate pieces that could be placed next
+- Iteratively places the piece with the highest match score
+- Handles the spatial arrangement of pieces based on edge orientations
 
 ```python
-def backtrack(self):
-    """Backtrack to a previous state in the assembly process."""
-    if not self.history:
-        return False
+class PuzzleAssembler:
+    def start_assembly(self):
+        # Choose seed piece with most high-quality matches
+        seed_piece_idx = max(seed_candidates.items(), key=lambda x: x[1])[0]
+        self.place_piece(seed_piece_idx, 0, 0)
+        self.update_frontier()
     
-    # Get the last placement
-    last_placement = self.history.pop()
-    piece_idx = last_placement['piece_idx']
-    
-    # Mark this placement as a dead end to avoid trying it again
-    placement_signature = (piece_idx, *last_placement['position'])
-    self.dead_ends.add(placement_signature)
-    
-    # Remove the piece
-    self.remove_piece(piece_idx)
-    
-    # Restore the used edges set to the state before this placement
-    self.used_edges = last_placement['used_edges']
-    
-    # Update frontier after removing the piece
-    self.update_frontier()
-    
-    return True
-```
-
-### 2. Dynamic Threshold Adjustment
-
-The system now includes dynamic threshold adjustment to balance precision with coverage:
-
-- Starts with high threshold for matching quality to prioritize confident matches
-- Automatically lowers threshold when progress stalls
-- Progressively explores less confident matches when needed
-- Returns to higher thresholds when high-quality matches are found
-- Preserves minimum quality standards to prevent nonsensical assemblies
-
-```python
-def adjust_threshold(self, lower=True):
-    """Adjust the matching threshold dynamically."""
-    if lower:
-        # Don't go below minimum threshold
-        if self.current_match_threshold > self.min_match_threshold:
-            # Reduce by 0.05 at a time
-            self.current_match_threshold = max(
-                self.current_match_threshold - 0.05, 
-                self.min_match_threshold
-            )
-            return True
-    else:
-        # Don't go above initial threshold
-        if self.current_match_threshold < self.initial_match_threshold:
-            # Increase by 0.05 at a time
-            self.current_match_threshold = min(
-                self.current_match_threshold + 0.05,
-                self.initial_match_threshold
-            )
-            return True
+    def assemble_next_piece(self):
+        # Find best piece to place next
+        for piece_idx in self.frontier:
+            position, edge_match = self.determine_piece_position(piece_idx)
+            # Find best match score
             
-    return False
+        # Place the piece with highest score
+        if best_piece and best_position:
+            row, col = best_position
+            self.place_piece(best_piece, row, col)
+            self.update_frontier()
+            return True
 ```
 
-### 3. Multiple Starting Points
+#### Enhanced Puzzle Assembly with Backtracking
 
-Multiple starting point strategy helps find better initial configurations:
+The puzzle assembly phase includes several advanced features for more robust and accurate assembly:
 
-- Automatically identifies promising candidate pieces for starting the assembly
-- Runs multiple assembly attempts with different starting pieces
-- Tracks the best assembly configuration achieved
-- Compares results to find the optimal solution
-- Retains the best solution when complete
+1. **Backtracking Assembly**
+   - Maintains history of piece placements for potential reversal
+   - Intelligently removes pieces when reaching a dead end
+   - Tracks dead-end configurations to avoid repeating mistakes
+   - Limits backtracking depth to control exploration vs. exploitation
+   - Reset and restart capability for optimal solution search
 
-```python
-def assemble_puzzle(self, try_multiple_starts=True, max_start_attempts=3):
-    """Assemble the complete puzzle using multiple starting points."""
-    print("Starting puzzle assembly...")
-    
-    best_assembly = None
-    best_pieces_placed = 0
-    
-    # Get seed candidates if using multiple starts
-    seed_candidates = [None]  # Default will use automatic selection
-    if try_multiple_starts:
-        seed_candidates = self.find_seed_candidates(num_candidates=max_start_attempts)
-        print(f"Will try {len(seed_candidates)} different starting pieces")
-    
-    # Try each seed candidate
-    for attempt, seed_piece in enumerate(seed_candidates):
-        # Reset for a new attempt
-        self.reset_assembly()
-        
-        # Place the first piece (automatic or specified)
-        success = self.start_assembly(seed_piece)
-        
-        # [Assembly process...]
-        
-        # Save this assembly if it's the best so far
-        if pieces_placed > best_pieces_placed:
-            best_pieces_placed = pieces_placed
-            best_assembly = {
-                "success": pieces_placed > 0,
-                "pieces_placed": pieces_placed,
-                "total_pieces": self.num_pieces,
-                "grid": dict(self.grid),
-                "placed_positions": dict(self.placed_positions)
-                # [Additional data stored...]
-            }
-```
+2. **Dynamic Threshold Adjustment**
+   - Starts with high threshold for matching quality to prioritize confident matches
+   - Automatically lowers threshold when progress stalls
+   - Progressively explores less confident matches when needed
+   - Returns to higher thresholds when high-quality matches are found
+   - Preserves minimum quality standards to prevent nonsensical assemblies
 
-### 4. Rotation Support
+3. **Multiple Starting Points**
+   - Automatically identifies promising candidate pieces for starting the assembly
+   - Runs multiple assembly attempts with different starting pieces
+   - Tracks the best assembly configuration achieved
+   - Compares results to find the optimal solution
+   - Retains the best solution when complete
 
-The assembler now handles piece rotation for more flexible assembly:
+4. **Rotation Support**
+   - Automatically calculates necessary rotation for proper piece alignment
+   - Supports all four possible orientations (0°, 90°, 180°, 270°)
+   - Tracks rotation information with each placement
+   - Applies slight scoring penalty for rotations to prefer non-rotated solutions when possible
+   - Visualizes rotated pieces in the assembly output
 
-- Automatically calculates necessary rotation for proper piece alignment
-- Supports all four possible orientations (0°, 90°, 180°, 270°)
-- Tracks rotation information with each placement
-- Applies slight scoring penalty for rotations to prefer non-rotated solutions when possible
-- Visualizes rotated pieces in the assembly output
+## Performance Optimizations
 
-```python
-# Calculate rotation needed for proper orientation
-rotation_needed = (required_edge - new_edge) % 4  # Clockwise rotation steps needed
+The implementation includes several optimizations for performance:
 
-# Apply a rotation penalty to the score (slightly prefer non-rotated pieces)
-adjusted_score = score
-if rotation_needed > 0:
-    # Small penalty for rotation (5% per step of rotation)
-    rotation_penalty = 0.05 * rotation_needed
-    adjusted_score = score * (1 - rotation_penalty)
-```
-
-### 5. Global Constraints
-
-Global constraint checking ensures consistent multi-edge arrangements:
-
-- Verifies that all edges of a piece have valid connections to neighbors
-- Checks neighbor consistency during placement decisions
-- Applies score penalties for conflicts with existing neighbors
-- Provides bonuses for multiple consistent neighbors
-- Rejects placements with severe conflicts to ensure coherent assembly
-
-```python
-# Apply global constraints to ensure consistent assembly
-# Check neighbor consistency - pieces should have matching neighbors on all sides
-neighbor_count = 0
-conflict_count = 0
-
-# Check all 4 adjacent positions
-for neighbor_dir in range(4):
-    # [Direction-specific calculations...]
-    
-    # Check if there's a neighbor in this direction
-    neighbor_idx = self.grid.get((neighbor_row, neighbor_col))
-    if neighbor_idx is not None:
-        neighbor_count += 1
-        
-        # Check if there's a good match between this piece and the neighbor
-        has_good_match = False
-        for match in self.edge_matches:
-            # [Match checking logic...]
-        
-        # If there's a neighbor but no good match, it's a conflict
-        if not has_good_match:
-            conflict_count += 1
-
-# Adjust score based on global constraints
-constraint_adjusted_score = adjusted_score
-
-# Penalty for conflicts with existing neighbors
-if conflict_count > 0:
-    # Severe penalty for each conflict (50% per conflict)
-    constraint_adjusted_score *= (1 - 0.5 * conflict_count)
-
-# Bonus for having multiple consistent neighbors
-consistent_neighbors = neighbor_count - conflict_count
-if consistent_neighbors > 0:
-    constraint_adjusted_score *= (1 + 0.05 * consistent_neighbors)
-```
-
-### 6. Enhanced Visualization
-
-The system now generates multiple complementary visualizations for better understanding of the assembly:
-
-- **Grid View**: Simple grid representation of the assembled puzzle
-- **Realistic View**: Shows actual piece shapes and how they connect
-- **Exploded View**: Displays pieces with spacing and connection lines
-- **Edge-Highlighted View**: Shows connection lines between matched pieces
-- **Combined View**: Presents all views side-by-side for comparison
-
-Connection lines in the exploded view are color-coded by match quality:
-- Green: High confidence matches
-- Orange: Medium confidence matches
-- Red: Lower confidence matches
-
-```python
-# Create visualizations:
-# 1. Grid-based simple view (for reference)
-# 2. Real-shape assembly view (more realistic)
-# 3. Interactive exploded view (showing pieces with connections)
-
-# Create a combined view with all visualizations
-combined_output_path = output_path.replace('.png', '_all_views.png')
-cv2.imwrite(combined_output_path, combined_canvas)
-```
+- **Caching**: Results of expensive operations are cached to avoid redundant calculations
+- **Parallel Processing**: Piece processing is distributed across multiple CPU cores
+- **Numba Acceleration**: Critical numerical operations are accelerated using Numba JIT compilation
+- **Memory Management**: Large data structures are handled efficiently with appropriate cleanup
 
 ## Current Results
 
 The system now achieves:
 
 - Complete assembly of 24-piece puzzles (100% pieces placed in test cases)
-- Accurate edge matching with DTW color sequence alignment
-- Rotation handling for flexible piece orientation
-- Intelligent backtracking to escape suboptimal configurations
+- Accurate edge matching with DTW color sequence alignment in LAB space
+- Backtracking capability to escape local minima during assembly
 - Adaptive threshold management for optimal precision vs. coverage balance
 - Multiple starting points to find the best assembly configuration
 - Enhanced visualizations showing realistic piece connections
-
-The combination of these features has significantly improved assembly performance, allowing the system to handle complex puzzles that previously could only be partially assembled.
 
 ## Future Improvements
 
 While the current system is much more robust, further improvements could include:
 
-- Support for piece flipping (in addition to rotation) for double-sided puzzles
-- Parallel hypothesis testing for even faster assembly
+1. **Hausdorff Distance and Procrustes Analysis**: 
+   - Implementing these more sophisticated contour matching techniques would provide better edge shape comparison beyond simple intrusion/extrusion classification.
+
+2. **Machine Learning for Feature Extraction**: 
+   - Training a model to learn what makes edges compatible by providing examples of correctly matched pieces.
+   - Potentially using siamese networks to compute similarity scores.
+
+3. **Advanced Spatial Color Analysis**: 
+   - Adapting the spatial sampling density based on edge length to ensure consistent feature resolution.
+   - Weighting samples by their position (focusing more on middle sections where distinctive patterns often occur).
+
+4. **Contextual Edge Matching**: 
+   - Considering neighboring edges when scoring matches, since real puzzles often have color themes or patterns that continue across multiple pieces.
+
+5. **Texture Features**: 
+   - Adding texture descriptors (LBP, GLCM features) to better capture patterns beyond color histograms.
+
+6. **Parallel Hypothesis Testing**:
+   - Testing multiple assembly configurations in parallel.
 
 ## Usage
 

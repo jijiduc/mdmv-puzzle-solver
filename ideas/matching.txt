@@ -1,33 +1,4 @@
-Potential Improvements for Edge Matching
 
-  1. Use Contour Matching: Implement more sophisticated contour matching techniques like
-  Hausdorff distance or Procrustes analysis to better compare edge shapes beyond simple
-  intrusion/extrusion classification.
-  2. Machine Learning for Feature Extraction: Train a model to learn what makes edges compatible
-   by providing examples of correctly matched pieces, potentially using siamese networks to
-  compute similarity scores.
-  3. Improved Spatial Color Analysis: Adapt the spatial sampling density based on edge length to
-   ensure consistent feature resolution, and weight samples by their position (e.g., focus more
-  on middle sections where distinctive patterns often occur).
-  4. Contextual Edge Matching: Consider neighboring edges when scoring matches, since real
-  puzzles often have color themes or patterns that continue across multiple pieces.
-  5. Texture Features: Add texture descriptors (LBP, GLCM features) to better capture patterns
-  beyond color histograms, especially useful for areas with similar colors but different
-  textures.
-  6. Corner Compatibility Scoring: Add specific scoring for how well corner regions align
-  between matched edges, as corners often have distinctive features.
-  7. Gradient Direction Matching: Compare the direction of color gradients across potential
-  matches, not just their magnitude, to ensure transitions align correctly.
-  8. Global Puzzle Context: Introduce a global constraint system that considers the overall
-  puzzle state and improves scores for matches that fit logically in the emerging image.
-  9. Adaptive Weighting: Dynamically adjust the shape/color weight ratio based on piece
-  characteristics (e.g., more weight on shape for highly distinctive edges).
-  10. Rotational Invariance: Add support for considering rotated pieces by comparing edges at
-  different orientations.
-  11. Ensemble Matching Approach: Combine multiple matching algorithms and feature sets, using a
-   voting or weighted ensemble to improve accuracy.
-  12. Backtracking Assembly: Implement backtracking in the assembly algorithm to escape local
-  optima when initial high-scoring matches lead to poor overall results.
 
    Hausdorff Distance and Procrustes Analysis
 
@@ -102,4 +73,3 @@ Potential Improvements for Edge Matching
   3. Multiple Starting Points (Medium): Helps find better initial configurations
   4. Rotation Support (Medium): Important for flexibility but more complex to implement
   5. Global Constraints (Low): More complex but provides refined placement decisions
-  6. Parallel Hypothesis Testing (Low): Valuable but requires more sophisticated implementation
