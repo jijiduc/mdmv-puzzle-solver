@@ -8,3 +8,4 @@ logs/*
 cache/*
 .claude
 debug_corners/*
+ideas/*
