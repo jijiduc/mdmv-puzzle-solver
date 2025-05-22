@@ -40,8 +40,6 @@ DEBUG_DIRS = {
 }
 
 # Cache configuration
-CACHE_DIR = '.cache'
-ENABLE_CACHING = True
 
 # Performance settings
 HIGH_PRIORITY_PROCESS = True

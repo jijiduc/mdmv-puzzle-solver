@@ -18,7 +18,6 @@ from src.utils.parallel import parallel_process_pieces, set_process_priority, Ti
 from src.utils.io_operations import save_masks, save_pieces, create_summary_report
 from src.utils.visualization import (
     create_input_visualization, 
-    create_geometry_visualization,
     create_edge_classification_visualization,
     create_summary_dashboard
 )
@@ -91,17 +90,25 @@ def main():
     
     print(f"Successfully processed {len(piece_results)} pieces")
     
+    # Update pieces with processing results (corners, edges, etc.)
+    for i, result in enumerate(piece_results):
+        if result and i < len(pieces):
+            piece = pieces[i]
+            # Update corners if they were found
+            if 'corners' in result:
+                piece.corners = result['corners']
+            # The edges are already set during processing via piece.add_edge()
+    
     # Step 5: Create geometry visualizations
     with Timer("Creating geometry visualizations"):
         for i, result in enumerate(piece_results):
-            if result:
-                piece_img = np.array(pieces[i]['img'], dtype=np.uint8)
-                create_geometry_visualization(result, piece_img, i, dirs['geometry'])
+            if result and i < len(pieces):
+                piece = pieces[i]
                 
                 # Add detailed corner detection analysis
                 corner_analysis_dir = os.path.join(dirs['geometry'], 'corner_analysis')
                 os.makedirs(corner_analysis_dir, exist_ok=True)
-                analyze_corner_detection_method(pieces[i], piece_img, i, corner_analysis_dir)
+                analyze_corner_detection_method(piece.to_dict(), piece.image, i, corner_analysis_dir)
     
     # Step 6: Basic edge visualization
     with Timer("Creating edge visualization"):

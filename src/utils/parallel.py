@@ -42,12 +42,12 @@ def init_worker():
             pass  # Ignore if cannot set priority
 
 
-def parallel_process_pieces(piece_data: List[Dict[str, Any]], output_dirs: Tuple[str, ...], 
+def parallel_process_pieces(pieces: List[Any], output_dirs: Tuple[str, ...], 
                           max_workers: int = None) -> List[Dict[str, Any]]:
     """Process puzzle pieces in parallel.
     
     Args:
-        piece_data: List of piece data dictionaries
+        pieces: List of Piece objects
         output_dirs: Tuple of output directory paths
         max_workers: Maximum number of worker processes
         
@@ -58,15 +58,15 @@ def parallel_process_pieces(piece_data: List[Dict[str, Any]], output_dirs: Tuple
         max_workers = DEFAULT_MAX_WORKERS or multiprocessing.cpu_count()
     
     # Limit to reasonable number of workers
-    max_workers = min(max_workers, multiprocessing.cpu_count(), len(piece_data))
+    max_workers = min(max_workers, multiprocessing.cpu_count(), len(pieces))
     
-    print(f"Processing {len(piece_data)} pieces using {max_workers} cores...")
+    print(f"Processing {len(pieces)} pieces using {max_workers} cores...")
     
     # Import here to avoid circular imports
     from ..core.piece_detection import process_piece
     
     # Prepare arguments for parallel processing
-    args_list = [(piece, output_dirs) for piece in piece_data]
+    args_list = [(piece, output_dirs) for piece in pieces]
     
     results = []
     with concurrent.futures.ProcessPoolExecutor(
@@ -88,7 +88,7 @@ def parallel_process_pieces(piece_data: List[Dict[str, Any]], output_dirs: Tuple
                 
                 # Progress reporting
                 if len(results) % 5 == 0:
-                    print(f"Processed {len(results)}/{len(piece_data)} pieces...")
+                    print(f"Processed {len(results)}/{len(pieces)} pieces...")
                     
             except Exception as e:
                 print(f"Error processing piece {piece_idx}: {e}")

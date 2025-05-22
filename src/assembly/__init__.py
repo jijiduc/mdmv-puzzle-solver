@@ -1,1 +1,0 @@
-"""Puzzle assembly and solving algorithms."""

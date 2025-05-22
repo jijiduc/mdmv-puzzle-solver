@@ -5,8 +5,8 @@ import numpy as np
 import os
 from typing import Dict, List, Tuple, Any
 
-from ..utils.caching import cache_result
 from ..utils.parallel import Timer
+from .piece import Piece
 
 
 def fill_holes_flood_fill(binary_mask: np.ndarray) -> np.ndarray:
@@ -190,7 +190,6 @@ def aggressive_hole_filling(binary_mask: np.ndarray) -> np.ndarray:
     return result
 
 
-@cache_result
 def detect_puzzle_pieces(img_path: str, threshold_value: int, min_area: int) -> Dict[str, Any]:
     """Detect and extract puzzle pieces from an image.
     
@@ -255,13 +254,14 @@ def detect_puzzle_pieces(img_path: str, threshold_value: int, min_area: int) -> 
             # Apply mask to piece (isolate from background)
             masked_piece = cv2.bitwise_and(piece_img, piece_img, mask=piece_mask)
             
-            # Add to list
-            pieces.append({
-                'index': i,
-                'img': masked_piece.tolist(),  # Convert to list for JSON
-                'mask': piece_mask.tolist(),
-                'bbox': (x1, y1, x2, y2)
-            })
+            # Create Piece object
+            piece = Piece(
+                index=i,
+                image=masked_piece,
+                mask=piece_mask,
+                bbox=(x1, y1, x2 - x1, y2 - y1)  # Convert to x, y, width, height format
+            )
+            pieces.append(piece)
     
     return {
         'count': len(pieces),

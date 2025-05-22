@@ -7,159 +7,6 @@ import os
 from typing import List, Tuple, Union
 
 
-def debug_edge_classification(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int], 
-                             corner2: Tuple[int, int], centroid: Tuple[int, int], 
-                             piece_idx: int, edge_idx: int, output_dir: str = "debug/05_geometry") -> None:
-    """Create detailed debug visualization for edge classification algorithm.
-    
-    Args:
-        edge_points: List of edge point coordinates
-        corner1: First corner coordinates
-        corner2: Second corner coordinates
-        centroid: Centroid coordinates
-        piece_idx: Piece index for naming
-        edge_idx: Edge index for naming
-        output_dir: Output directory for debug images
-    """
-    if len(edge_points) < 5:
-        return
-        
-    # Create figure with subplots
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle(f'Edge Classification Debug - Piece {piece_idx}, Edge {edge_idx}', fontsize=16)
-    
-    # Convert points to numpy array
-    edge_points_np = np.array(edge_points)
-    x1, y1 = corner1
-    x2, y2 = corner2
-    centroid_x, centroid_y = centroid
-    
-    # Calculate line vector and normal
-    line_vec = (x2-x1, y2-y1)
-    line_length = math.sqrt(line_vec[0]**2 + line_vec[1]**2)
-    if line_length < 1:
-        return
-        
-    normal_vec = (-line_vec[1]/line_length, line_vec[0]/line_length)
-    
-    # Calculate direction using robust method
-    outward_normal = determine_outward_direction_robust(edge_points, corner1, corner2, centroid, normal_vec, 
-                                                       piece_idx, edge_idx)
-    
-    # For comparison, also calculate old method
-    mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
-    centroid_to_mid = (mid_x - centroid_x, mid_y - centroid_y)
-    normal_direction = centroid_to_mid[0]*normal_vec[0] + centroid_to_mid[1]*normal_vec[1]
-    old_outward_normal = normal_vec if normal_direction > 0 else (-normal_vec[0], -normal_vec[1])
-    
-    # Calculate deviations
-    deviations = []
-    projected_points = []
-    for x, y in edge_points:
-        point_vec = (x-x1, y-y1)
-        if line_length > 0:
-            line_dot = (point_vec[0]*line_vec[0] + point_vec[1]*line_vec[1]) / line_length
-            proj_x = x1 + line_dot * line_vec[0] / line_length
-            proj_y = y1 + line_dot * line_vec[1] / line_length
-            projected_points.append((proj_x, proj_y))
-            
-            dev_vec = (x-proj_x, y-proj_y)
-            deviation = math.sqrt(dev_vec[0]**2 + dev_vec[1]**2)
-            sign = 1 if (dev_vec[0]*outward_normal[0] + dev_vec[1]*outward_normal[1]) > 0 else -1
-            deviations.append(sign * deviation)
-    
-    projected_points_np = np.array(projected_points)
-    
-    # Plot 1: Basic geometry
-    ax1.set_title('Basic Edge Geometry')
-    ax1.plot(edge_points_np[:, 0], edge_points_np[:, 1], 'b-', linewidth=2, label='Actual Edge')
-    ax1.plot([x1, x2], [y1, y2], 'r-', linewidth=3, label='Reference Line')
-    ax1.plot([x1, x2], [y1, y2], 'ro', markersize=8)
-    ax1.plot(centroid_x, centroid_y, 'g*', markersize=15, label='Centroid')
-    ax1.plot(projected_points_np[:, 0], projected_points_np[:, 1], 'r--', alpha=0.7, label='Projected Points')
-    ax1.set_xlabel('X')
-    ax1.set_ylabel('Y')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.axis('equal')
-    
-    # Plot 2: Normal vectors and directions
-    ax2.set_title('Normal Vector Analysis')
-    ax2.plot(edge_points_np[:, 0], edge_points_np[:, 1], 'b-', linewidth=2, label='Actual Edge')
-    ax2.plot([x1, x2], [y1, y2], 'r-', linewidth=3, label='Reference Line')
-    ax2.plot(centroid_x, centroid_y, 'g*', markersize=15, label='Centroid')
-    
-    # Draw normal vectors
-    scale = line_length * 0.3
-    ax2.arrow(mid_x, mid_y, normal_vec[0]*scale, normal_vec[1]*scale, 
-              head_width=scale*0.1, head_length=scale*0.1, fc='orange', ec='orange', label='Normal Vector')
-    ax2.arrow(mid_x, mid_y, old_outward_normal[0]*scale, old_outward_normal[1]*scale, 
-              head_width=scale*0.1, head_length=scale*0.1, fc='red', ec='red', label='Old Outward Normal')
-    ax2.arrow(mid_x, mid_y, outward_normal[0]*scale, outward_normal[1]*scale, 
-              head_width=scale*0.1, head_length=scale*0.1, fc='purple', ec='purple', label='NEW Outward Normal')
-    
-    # Draw centroid to midpoint vector
-    ax2.arrow(centroid_x, centroid_y, centroid_to_mid[0], centroid_to_mid[1], 
-              head_width=scale*0.05, head_length=scale*0.05, fc='green', ec='green', label='Centroid→Mid')
-    
-    ax2.text(mid_x + scale*0.5, mid_y, f'Old Normal Dir: {normal_direction:.2f}', fontsize=10)
-    
-    # Show if direction changed
-    direction_changed = not (np.allclose(outward_normal, old_outward_normal, atol=0.01))
-    ax2.text(mid_x + scale*0.5, mid_y - scale*0.3, f'Direction Changed: {direction_changed}', 
-             fontsize=10, color='red' if direction_changed else 'green')
-    ax2.set_xlabel('X')
-    ax2.set_ylabel('Y')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.axis('equal')
-    
-    # Plot 3: Deviation analysis
-    ax3.set_title('Deviation Analysis')
-    colors = ['red' if d < 0 else 'blue' for d in deviations]
-    ax3.scatter(range(len(deviations)), deviations, c=colors, alpha=0.7)
-    ax3.axhline(y=0, color='black', linestyle='-', alpha=0.5)
-    ax3.set_xlabel('Point Index')
-    ax3.set_ylabel('Signed Deviation (pixels)')
-    ax3.grid(True, alpha=0.3)
-    
-    # Add statistics
-    mean_dev = np.mean(deviations) if deviations else 0
-    max_dev = np.max(np.abs(deviations)) if deviations else 0
-    pos_count = sum(1 for d in deviations if d > 0)
-    neg_count = sum(1 for d in deviations if d < 0)
-    
-    ax3.text(0.02, 0.98, f'Mean: {mean_dev:.2f}\nMax: {max_dev:.2f}\nPos: {pos_count}\nNeg: {neg_count}', 
-             transform=ax3.transAxes, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat'))
-    
-    # Plot 4: Color-coded edge points
-    ax4.set_title('Deviation Visualization on Edge')
-    norm_deviations = np.array(deviations)
-    max_abs_dev = np.max(np.abs(norm_deviations)) if len(norm_deviations) > 0 else 1
-    norm_deviations = norm_deviations / max_abs_dev if max_abs_dev > 0 else norm_deviations
-    
-    scatter = ax4.scatter(edge_points_np[:, 0], edge_points_np[:, 1], 
-                         c=norm_deviations, cmap='RdBu', s=50, alpha=0.8)
-    ax4.plot([x1, x2], [y1, y2], 'k-', linewidth=3, alpha=0.5, label='Reference Line')
-    ax4.plot([x1, x2], [y1, y2], 'ko', markersize=8)
-    ax4.plot(centroid_x, centroid_y, 'g*', markersize=15, label='Centroid')
-    
-    plt.colorbar(scatter, ax=ax4, label='Normalized Deviation (Red=Negative, Blue=Positive)')
-    ax4.set_xlabel('X')
-    ax4.set_ylabel('Y')
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-    ax4.axis('equal')
-    
-    # Save the debug image
-    os.makedirs(output_dir, exist_ok=True)
-    debug_path = os.path.join(output_dir, f'edge_classification_debug_piece_{piece_idx}_edge_{edge_idx}.png')
-    plt.tight_layout()
-    plt.savefig(debug_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Edge classification debug saved: {debug_path}")
-
 
 def extract_edge_between_corners(corners: List[Tuple[int, int]], corner_idx1: int, corner_idx2: int, 
                                 edge_coords: np.ndarray, centroid: Tuple[int, int]) -> List[Tuple[int, int]]:
@@ -444,9 +291,6 @@ def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int],
     if len(edge_points) == 0 or len(edge_points) < 5:
         return "unknown", 0
     
-    # Debug visualization for specific piece and edge
-    # if piece_idx == 1 and edge_idx == 2:  # Piece 1, Edge 3 (0-indexed as edge 2)
-    #     debug_edge_classification(edge_points, corner1, corner2, centroid, piece_idx, edge_idx)
     
     # Create straight line between corners
     x1, y1 = corner1
@@ -465,10 +309,6 @@ def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int],
     # Use robust method to determine correct outward direction
     outward_normal = determine_outward_direction_robust(edge_points, corner1, corner2, centroid, normal_vec, 
                                                        piece_idx, edge_idx)
-    
-    # Debug the direction calculation
-    # if piece_idx == 1 and edge_idx == 2:  # Piece 1, Edge 3 (0-indexed as edge 2)
-    #     debug_edge_classification(edge_points, corner1, corner2, centroid, piece_idx, edge_idx)
     
     # Calculate deviations for all edge points
     deviations = []

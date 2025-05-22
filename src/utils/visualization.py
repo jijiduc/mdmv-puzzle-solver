@@ -199,19 +199,6 @@ def create_piece_gallery(pieces: List[Dict[str, Any]], output_dir: str):
     plt.close()
 
 
-def create_geometry_visualization(piece_result: Dict[str, Any], piece_img: np.ndarray, 
-                                piece_idx: int, output_dir: str):
-    """Create geometric analysis visualization for a piece.
-    
-    Args:
-        piece_result: Processed piece data
-        piece_img: Piece image
-        piece_idx: Piece index
-        output_dir: Output directory
-    """
-    pass
-    
-
 
 
 

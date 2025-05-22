@@ -42,21 +42,30 @@ def save_masks(img: np.ndarray, binary_mask: np.ndarray, processed_mask: np.ndar
     )
 
 
-def save_pieces(pieces: List[Dict[str, Any]], img: np.ndarray, filled_mask: np.ndarray, dirs: Dict[str, str]):
+def save_pieces(pieces: List[Any], img: np.ndarray, filled_mask: np.ndarray, dirs: Dict[str, str]):
     """Save individual puzzle pieces with enhanced visualizations.
     
     Args:
-        pieces: List of piece data dictionaries
+        pieces: List of Piece objects
         img: Original image
         filled_mask: Binary mask
         dirs: Dictionary of output directories
     """
+    # Convert pieces to dictionaries for compatibility
+    piece_dicts = [piece.to_dict() if hasattr(piece, 'to_dict') else piece for piece in pieces]
+    
     # Create piece gallery
-    create_piece_gallery(pieces, dirs['pieces'])
+    create_piece_gallery(piece_dicts, dirs['pieces'])
     
     # Save individual pieces with detailed info
-    for index, piece_data in enumerate(pieces):
-        piece_img = np.array(piece_data['img'], dtype=np.uint8)
+    for index, piece in enumerate(pieces):
+        if hasattr(piece, 'image'):
+            piece_img = piece.image
+            piece_data = piece.to_dict()
+        else:
+            # Fallback for dictionary format
+            piece_img = np.array(piece['img'], dtype=np.uint8)
+            piece_data = piece
         save_piece_with_visualization(piece_data, piece_img, index, dirs['pieces'])
 
 
@@ -104,8 +113,19 @@ def create_summary_report(piece_results: List[Dict[str, Any]], output_file: str)
         for edge_type, count in edge_type_counts.items():
             f.write(f"  {edge_type}: {count}\n")
         
+        # Count piece types
+        piece_type_counts = {}
+        for result in piece_results:
+            piece_type = result.get('piece_type', 'unknown')
+            piece_type_counts[piece_type] = piece_type_counts.get(piece_type, 0) + 1
+        
+        f.write("\nPiece type distribution:\n")
+        for piece_type, count in piece_type_counts.items():
+            f.write(f"  {piece_type}: {count}\n")
+        
         f.write("\nPiece details:\n")
         for i, result in enumerate(piece_results):
             f.write(f"\nPiece {i+1}:\n")
+            f.write(f"  Type: {result.get('piece_type', 'unknown')}\n")
             f.write(f"  Edge types: {result.get('edge_types', [])}\n")
             f.write(f"  Corners: {len(result.get('corners', []))}\n")

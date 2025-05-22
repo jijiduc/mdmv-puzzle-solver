@@ -13,7 +13,7 @@ def analyze_corner_detection_method(piece_data: Dict[str, Any], piece_img: np.nd
     """Create comprehensive analysis of the corner detection method.
     
     Args:
-        piece_data: Piece processing result data
+        piece_data: Piece processing result data (can be dict from Piece.to_dict())
         piece_img: Piece image
         piece_idx: Piece index
         output_dir: Output directory for analysis
@@ -24,6 +24,10 @@ def analyze_corner_detection_method(piece_data: Dict[str, Any], piece_img: np.nd
     piece_mask = np.array(piece_data.get('mask', []), dtype=np.uint8) if 'mask' in piece_data else None
     if piece_mask is None:
         return
+    
+    # Check if we have corners already computed
+    stored_corners = piece_data.get('corners', None)
+    stored_centroid = piece_data.get('centroid', None)
     
     # Detect edges
     edges = cv2.Canny(piece_mask, 50, 150)
@@ -73,6 +77,13 @@ def analyze_corner_detection_method(piece_data: Dict[str, Any], piece_img: np.nd
     corners_analysis = detailed_corner_detection_analysis(
         sorted_distances, sorted_coords, sorted_angles
     )
+    
+    # If we have stored corners, add them to the analysis
+    if stored_corners is not None:
+        corners_analysis['stored_corners'] = stored_corners
+        corners_analysis['used_stored'] = True
+    else:
+        corners_analysis['used_stored'] = False
     
     # Create comprehensive visualization
     create_corner_detection_breakdown(
@@ -364,7 +375,14 @@ def create_corner_detection_breakdown(piece_img: np.ndarray, coords: List[Tuple[
     ax7 = plt.subplot(3, 4, 7)
     ax7.imshow(cv2.cvtColor(piece_img, cv2.COLOR_BGR2RGB))
     
-    final_corners = analysis['result']
+    # Use stored corners if available, otherwise use analysis result
+    if analysis.get('used_stored', False) and 'stored_corners' in analysis:
+        final_corners = analysis['stored_corners']
+        title_suffix = " (Actual Used)"
+    else:
+        final_corners = analysis['result']
+        title_suffix = " (Analysis Only)"
+    
     if final_corners:
         corners_array = np.array(final_corners)
         ax7.scatter(corners_array[:, 0], corners_array[:, 1], 
@@ -377,7 +395,7 @@ def create_corner_detection_breakdown(piece_img: np.ndarray, coords: List[Tuple[
                         color='white', fontweight='bold')
     
     ax7.scatter(centroid[0], centroid[1], c='red', s=80, marker='x', linewidth=3)
-    ax7.set_title(f'Final Corners ({len(final_corners)})')
+    ax7.set_title(f'Final Corners ({len(final_corners)}){title_suffix}')
     ax7.axis('off')
     
     # 8. Method used text summary
