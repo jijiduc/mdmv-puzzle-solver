@@ -21,21 +21,22 @@ DEBUG_DIRS = {
     # Step 2: Piece detection and extraction
     'detection': 'debug/03_detection',
     'pieces': 'debug/04_pieces',
-    # Step 3: Feature analysis
+    # Step 3: Geometric analysis
     'geometry': 'debug/05_geometry',
-    'colors': 'debug/06_colors', 
-    'edges': 'debug/07_edges',
-    # Step 4: Classification and matching
-    'classification': 'debug/08_classification',
-    'matching': 'debug/09_matching',
-    # Step 5: Assembly results
-    'assembly': 'debug/10_assembly',
+    # Step 4: Feature analysis (merged colors + edges)
+    'features': 'debug/06_features',
+    'features_shape': 'debug/06_features/shape',
+    'features_color': 'debug/06_features/color',
+    # Step 5: Piece classification and matching
+    'classification': 'debug/07_piece_classification',
+    'matching': 'debug/08_matching',
+    # Step 6: Assembly results
+    'assembly': 'debug/09_assembly',
     # Legacy mappings for compatibility
     'masks': 'debug/02_preprocessing/masks',
-    'corners': 'debug/05_geometry/corners',
     'contours': 'debug/03_detection/contours',
-    'edge_types': 'debug/08_classification/edge_types',
-    'color_features': 'debug/06_colors/features'
+    'edge_types': 'debug/07_piece_classification/edge_types',
+    'edges': 'debug/06_features/shape'
 }
 
 # Cache configuration

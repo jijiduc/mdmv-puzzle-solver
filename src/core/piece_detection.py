@@ -24,10 +24,7 @@ def process_piece(piece_data: Dict[str, Any], output_dirs: Tuple[str, ...]) -> D
     piece_index = piece_data['index']
     
     # Get output paths
-    edges_dir, edge_types_dir, corners_dir, contours_dir = output_dirs
-    
-    color_features_dir = os.path.join(os.path.dirname(edges_dir), "color_features")
-    os.makedirs(color_features_dir, exist_ok=True)
+    edges_dir, edge_types_dir, contours_dir = output_dirs
     
     # Convert lists to NumPy arrays
     piece_img = np.array(piece_data['img'], dtype=np.uint8)
@@ -92,8 +89,9 @@ def process_piece(piece_data: Dict[str, Any], output_dirs: Tuple[str, ...]) -> D
                                                   np.array(sorted_coords), centroid)
         
         if len(edge_points) > 0:
-            # Classify edge type
-            edge_type, deviation = classify_edge(edge_points, corners[i], corners[next_i], centroid)
+            # Classify edge type (pass piece and edge indices for debug)
+            edge_type, deviation = classify_edge(edge_points, corners[i], corners[next_i], centroid, 
+                                                piece_index, i)
             edge_types.append(edge_type)
             edge_deviations.append(deviation)
             
@@ -115,7 +113,9 @@ def process_piece(piece_data: Dict[str, Any], output_dirs: Tuple[str, ...]) -> D
         'edge_deviations': edge_deviations,
         'edge_colors': edge_colors,
         'corners': corners,
-        'centroid': centroid
+        'centroid': centroid,
+        'img': piece_img.tolist(),  # Add piece image for visualization
+        'mask': piece_mask.tolist()  # Add piece mask
     }
 
 

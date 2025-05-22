@@ -209,224 +209,17 @@ def create_geometry_visualization(piece_result: Dict[str, Any], piece_img: np.nd
         piece_idx: Piece index
         output_dir: Output directory
     """
-    corners_dir = os.path.join(output_dir, 'corners')
-    analysis_dir = os.path.join(output_dir, 'corner_analysis')
-    os.makedirs(corners_dir, exist_ok=True)
-    os.makedirs(analysis_dir, exist_ok=True)
+    pass
     
-    # Create corner visualization
-    if 'corners' in piece_result:
-        corner_img = piece_img.copy()
-        corners = piece_result['corners']
-        centroid = piece_result.get('centroid', (0, 0))
-        
-        # Draw corners
-        for i, corner in enumerate(corners):
-            cv2.circle(corner_img, tuple(map(int, corner)), 5, (0, 255, 0), -1)
-            cv2.putText(corner_img, f'C{i+1}', (int(corner[0])+10, int(corner[1])-10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        # Draw centroid
-        cv2.circle(corner_img, tuple(map(int, centroid)), 3, (255, 0, 0), -1)
-        cv2.putText(corner_img, 'Centroid', (int(centroid[0])+10, int(centroid[1])+10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        # Draw lines from centroid to corners
-        for corner in corners:
-            cv2.line(corner_img, tuple(map(int, centroid)), tuple(map(int, corner)), (0, 0, 255), 1)
-        
-        cv2.imwrite(os.path.join(corners_dir, f'piece_{piece_idx+1}_corners.png'), corner_img)
-        
-        # Create corner-distance analysis visualization
-        create_corner_distance_analysis(piece_result, piece_img, piece_idx, analysis_dir)
 
 
-def create_corner_distance_analysis(piece_result: Dict[str, Any], piece_img: np.ndarray, 
-                                   piece_idx: int, output_dir: str):
-    """Create combined corner and distance analysis visualization.
-    
-    Args:
-        piece_result: Processed piece data
-        piece_img: Piece image
-        piece_idx: Piece index
-        output_dir: Output directory
-    """
-    if 'corners' not in piece_result:
-        return
-    
-    corners = piece_result['corners']
-    centroid = piece_result.get('centroid', (0, 0))
-    
-    # Create figure with subplots
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle(f'Piece {piece_idx+1} - Corner & Distance Analysis', fontsize=14, fontweight='bold')
-    
-    # 1. Original piece with corners
-    axes[0, 0].imshow(cv2.cvtColor(piece_img, cv2.COLOR_BGR2RGB))
-    axes[0, 0].set_title('Corners & Centroid')
-    
-    # Plot corners and centroid
-    if corners:
-        corners_array = np.array(corners)
-        axes[0, 0].scatter(corners_array[:, 0], corners_array[:, 1], 
-                          c='lime', s=100, marker='o', edgecolors='black', linewidth=2, label='Corners')
-        
-        # Label corners
-        for i, corner in enumerate(corners):
-            axes[0, 0].annotate(f'C{i+1}', (corner[0], corner[1]), 
-                              xytext=(5, 5), textcoords='offset points', 
-                              fontsize=10, color='white', fontweight='bold')
-    
-    # Plot centroid
-    axes[0, 0].scatter(centroid[0], centroid[1], c='red', s=80, marker='x', 
-                      linewidth=3, label='Centroid')
-    
-    # Draw lines from centroid to corners
-    for corner in corners:
-        axes[0, 0].plot([centroid[0], corner[0]], [centroid[1], corner[1]], 
-                       'r--', alpha=0.7, linewidth=1)
-    
-    axes[0, 0].legend()
-    axes[0, 0].axis('off')
-    
-    # 2. Distance from centroid to corners (polar plot)
-    if len(corners) >= 3:
-        # Calculate distances and angles
-        distances = []
-        angles = []
-        for corner in corners:
-            dist = np.sqrt((corner[0] - centroid[0])**2 + (corner[1] - centroid[1])**2)
-            angle = np.arctan2(corner[1] - centroid[1], corner[0] - centroid[0])
-            distances.append(dist)
-            angles.append(angle)
-        
-        # Close the polygon for plotting
-        angles_closed = angles + [angles[0]]
-        distances_closed = distances + [distances[0]]
-        
-        # Create polar subplot
-        ax_polar = plt.subplot(2, 2, 2, projection='polar')
-        ax_polar.plot(angles_closed, distances_closed, 'o-', linewidth=2, markersize=8)
-        ax_polar.fill(angles_closed, distances_closed, alpha=0.3)
-        ax_polar.set_title('Distance Profile (Polar)', pad=20)
-        ax_polar.grid(True)
-        
-        # Label points
-        for i, (angle, dist) in enumerate(zip(angles, distances)):
-            ax_polar.annotate(f'C{i+1}', (angle, dist), xytext=(5, 5), 
-                            textcoords='offset points', fontsize=9)
-    else:
-        axes[0, 1].text(0.5, 0.5, 'Need ≥3 corners\nfor polar plot', 
-                       ha='center', va='center', transform=axes[0, 1].transAxes)
-        axes[0, 1].set_title('Distance Profile (Polar)')
-        axes[0, 1].axis('off')
-    
-    # 3. Distance bar chart
-    if corners:
-        distances = [np.sqrt((corner[0] - centroid[0])**2 + (corner[1] - centroid[1])**2) 
-                    for corner in corners]
-        corner_labels = [f'C{i+1}' for i in range(len(corners))]
-        
-        bars = axes[1, 0].bar(corner_labels, distances, color=['#ff9999', '#66b3ff', '#99ff99', '#ffcc99'][:len(distances)])
-        axes[1, 0].set_title('Corner Distances from Centroid')
-        axes[1, 0].set_ylabel('Distance (pixels)')
-        axes[1, 0].grid(True, alpha=0.3)
-        
-        # Add value labels on bars
-        for bar, dist in zip(bars, distances):
-            axes[1, 0].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                           f'{dist:.1f}', ha='center', va='bottom', fontweight='bold')
-    else:
-        axes[1, 0].text(0.5, 0.5, 'No corners detected', ha='center', va='center', 
-                       transform=axes[1, 0].transAxes)
-        axes[1, 0].set_title('Corner Distances from Centroid')
-    
-    # 4. Corner angle analysis
-    if len(corners) >= 3:
-        # Calculate internal angles between consecutive corners
-        corner_angles = []
-        for i in range(len(corners)):
-            prev_corner = corners[i-1]
-            curr_corner = corners[i]
-            next_corner = corners[(i+1) % len(corners)]
-            
-            # Vectors
-            v1 = np.array([prev_corner[0] - curr_corner[0], prev_corner[1] - curr_corner[1]])
-            v2 = np.array([next_corner[0] - curr_corner[0], next_corner[1] - curr_corner[1]])
-            
-            # Angle between vectors
-            if np.linalg.norm(v1) > 0 and np.linalg.norm(v2) > 0:
-                cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
-                cos_angle = np.clip(cos_angle, -1, 1)
-                angle_deg = np.degrees(np.arccos(cos_angle))
-                corner_angles.append(angle_deg)
-            else:
-                corner_angles.append(0)
-        
-        # Plot angles
-        angle_labels = [f'∠C{i+1}' for i in range(len(corner_angles))]
-        bars = axes[1, 1].bar(angle_labels, corner_angles, 
-                             color=['#ffeb3b', '#ff9800', '#f44336', '#9c27b0'][:len(corner_angles)])
-        axes[1, 1].set_title('Internal Corner Angles')
-        axes[1, 1].set_ylabel('Angle (degrees)')
-        axes[1, 1].grid(True, alpha=0.3)
-        axes[1, 1].axhline(y=90, color='red', linestyle='--', alpha=0.7, label='90°')
-        
-        # Add value labels
-        for bar, angle in zip(bars, corner_angles):
-            axes[1, 1].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
-                           f'{angle:.1f}°', ha='center', va='bottom', fontweight='bold')
-        
-        axes[1, 1].legend()
-    else:
-        axes[1, 1].text(0.5, 0.5, 'Need ≥3 corners\nfor angle analysis', 
-                       ha='center', va='center', transform=axes[1, 1].transAxes)
-        axes[1, 1].set_title('Internal Corner Angles')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'piece_{piece_idx+1}_corner_distance_analysis.png'), 
-               dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    # Create detailed text report
-    report_file = os.path.join(output_dir, f'piece_{piece_idx+1}_geometry_report.txt')
-    with open(report_file, 'w') as f:
-        f.write(f"Piece {piece_idx+1} - Geometric Analysis Report\n")
-        f.write("=" * 50 + "\n\n")
-        
-        f.write(f"Centroid: ({centroid[0]:.1f}, {centroid[1]:.1f})\n")
-        f.write(f"Number of corners detected: {len(corners)}\n\n")
-        
-        if corners:
-            f.write("Corner Coordinates:\n")
-            for i, corner in enumerate(corners):
-                f.write(f"  C{i+1}: ({corner[0]:.1f}, {corner[1]:.1f})\n")
-            
-            f.write(f"\nCorner Distances from Centroid:\n")
-            for i, corner in enumerate(corners):
-                dist = np.sqrt((corner[0] - centroid[0])**2 + (corner[1] - centroid[1])**2)
-                f.write(f"  C{i+1}: {dist:.1f} pixels\n")
-            
-            if len(corners) >= 3:
-                f.write(f"\nInternal Corner Angles:\n")
-                for i, angle in enumerate(corner_angles):
-                    f.write(f"  ∠C{i+1}: {angle:.1f}°\n")
-                
-                avg_angle = np.mean(corner_angles)
-                f.write(f"\nAverage corner angle: {avg_angle:.1f}°\n")
-                f.write(f"Expected for regular polygon: {180 * (len(corners) - 2) / len(corners):.1f}°\n")
 
 
-def create_edge_classification_visualization(piece_results: List[Dict[str, Any]], output_dir: str):
-    """Create edge classification summary visualization.
-    
-    Args:
-        piece_results: List of processed piece results
-        output_dir: Output directory
-    """
-    edge_types_dir = os.path.join(output_dir, 'edge_types')
-    os.makedirs(edge_types_dir, exist_ok=True)
-    
+
+
+
+def create_edge_type_analysis(piece_results: List[Dict[str, Any]], output_dir: str):
+    """Create edge type analysis visualization."""
     # Collect edge type statistics
     edge_type_counts = {}
     total_edges = 0
@@ -437,9 +230,10 @@ def create_edge_classification_visualization(piece_results: List[Dict[str, Any]]
             edge_type_counts[edge_type] = edge_type_counts.get(edge_type, 0) + 1
             total_edges += 1
     
-    # Create pie chart
+    # Create visualization
     if edge_type_counts:
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Edge Type Analysis', fontsize=16, fontweight='bold')
         
         # Pie chart
         labels = list(edge_type_counts.keys())
@@ -450,33 +244,62 @@ def create_edge_classification_visualization(piece_results: List[Dict[str, Any]]
         ax1.set_title('Edge Type Distribution')
         
         # Bar chart
-        ax2.bar(labels, sizes, color=colors[:len(labels)])
+        bars = ax2.bar(labels, sizes, color=colors[:len(labels)])
         ax2.set_title('Edge Type Counts')
         ax2.set_ylabel('Number of Edges')
-        plt.xticks(rotation=45)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, size in zip(bars, sizes):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                    str(size), ha='center', va='bottom', fontweight='bold')
+        
+        # Edge deviation distribution
+        all_deviations = []
+        for result in piece_results:
+            deviations = result.get('edge_deviations', [])
+            all_deviations.extend([abs(d) for d in deviations])
+        
+        if all_deviations:
+            ax3.hist(all_deviations, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+            ax3.set_title('Edge Deviation Distribution')
+            ax3.set_xlabel('Absolute Deviation')
+            ax3.set_ylabel('Frequency')
+            ax3.grid(True, alpha=0.3)
+        
+        # Edge type per piece
+        piece_indices = list(range(1, len(piece_results) + 1))
+        edge_type_matrix = []
+        
+        for result in piece_results:
+            edge_types = result.get('edge_types', [])
+            type_counts = {t: edge_types.count(t) for t in labels}
+            edge_type_matrix.append([type_counts.get(t, 0) for t in labels])
+        
+        if edge_type_matrix:
+            im = ax4.imshow(np.array(edge_type_matrix).T, aspect='auto', cmap='viridis')
+            ax4.set_title('Edge Types per Piece')
+            ax4.set_xlabel('Piece Index')
+            ax4.set_ylabel('Edge Type')
+            ax4.set_yticks(range(len(labels)))
+            ax4.set_yticklabels(labels)
+            ax4.set_xticks(range(len(piece_indices)))
+            ax4.set_xticklabels(piece_indices)
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax4)
+            cbar.set_label('Count')
         
         plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, 'edge_classification_summary.png'), 
+        plt.savefig(os.path.join(output_dir, 'edge_type_analysis.png'), 
                    dpi=150, bbox_inches='tight')
         plt.close()
-    
-    # Create detailed report
-    report_file = os.path.join(output_dir, 'classification_report.txt')
-    with open(report_file, 'w') as f:
-        f.write("Edge Classification Report\n")
-        f.write("=" * 40 + "\n")
-        f.write(f"Total pieces analyzed: {len(piece_results)}\n")
-        f.write(f"Total edges analyzed: {total_edges}\n\n")
-        
-        f.write("Edge type distribution:\n")
-        for edge_type, count in edge_type_counts.items():
-            percentage = (count / total_edges * 100) if total_edges > 0 else 0
-            f.write(f"  {edge_type}: {count} ({percentage:.1f}%)\n")
-        
-        f.write("\nPiece details:\n")
-        for i, result in enumerate(piece_results):
-            edge_types = result.get('edge_types', [])
-            f.write(f"  Piece {i+1}: {edge_types}\n")
+
+
+def create_edge_classification_visualization(piece_results: List[Dict[str, Any]], output_dir: str):
+    """Create edge classification summary visualization (legacy function)."""
+    # Call the new comprehensive visualization
+    create_edge_type_analysis(piece_results, output_dir)
 
 
 def create_summary_dashboard(piece_count: int, processing_time: float, 
@@ -520,12 +343,13 @@ def create_summary_dashboard(piece_count: int, processing_time: float,
         f.write(f"  📁 02_preprocessing/ - Image processing steps\n")
         f.write(f"  📁 03_detection/ - Contour detection results\n")
         f.write(f"  📁 04_pieces/ - Individual piece extractions\n")
-        f.write(f"  📁 05_geometry/ - Geometric analysis\n")
-        f.write(f"  📁 06_colors/ - Color feature analysis\n") 
-        f.write(f"  📁 07_edges/ - Edge feature extraction\n")
-        f.write(f"  📁 08_classification/ - Piece classification\n")
-        f.write(f"  📁 09_matching/ - Edge matching results\n")
-        f.write(f"  📁 10_assembly/ - Final assembly output\n")
+        f.write(f"  📁 05_geometry/ - Geometric analysis & corner detection\n")
+        f.write(f"  📁 06_features/ - Shape feature analysis\n") 
+        f.write(f"    📁 shape/ - Edge classification & individual visualizations\n")
+        f.write(f"    📁 color/ - Color feature extraction (future)\n")
+        f.write(f"  📁 07_piece_classification/ - Advanced piece classification\n")
+        f.write(f"  📁 08_matching/ - Edge matching results\n")
+        f.write(f"  📁 09_assembly/ - Final assembly output\n")
 
 
 def save_piece_with_visualization(piece_data: Dict[str, Any], piece_img: np.ndarray, 

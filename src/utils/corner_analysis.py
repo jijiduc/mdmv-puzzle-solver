@@ -418,61 +418,80 @@ Final Corners: {len(analysis['result'])}"""
     ax10.set_ylabel('Frequency')
     ax10.grid(True, alpha=0.3)
     
-    # 11. Corner quality metrics
+    # 11. Corner distances from centroid (bar chart)
     ax11 = plt.subplot(3, 4, 11)
-    ax11.axis('off')
     
     if len(final_corners) >= 3:
-        # Calculate corner metrics
+        # Calculate corner distances
         corner_distances = [np.sqrt((c[0] - centroid[0])**2 + (c[1] - centroid[1])**2) 
                            for c in final_corners]
-        distance_variance = np.var(corner_distances)
-        distance_cv = np.std(corner_distances) / np.mean(corner_distances) if np.mean(corner_distances) > 0 else 0
+        corner_labels = [f'C{i+1}' for i in range(len(final_corners))]
         
-        quality_text = f"""Corner Quality Metrics:
+        bars = ax11.bar(corner_labels, corner_distances, color=['red', 'green', 'blue', 'orange'][:len(final_corners)])
+        ax11.set_title('Corner Distances from Centroid')
+        ax11.set_ylabel('Distance (pixels)')
+        ax11.grid(True, alpha=0.3)
         
-Distance Variance: {distance_variance:.1f}
-Distance CV: {distance_cv:.3f}
-Distance Range: {max(corner_distances) - min(corner_distances):.1f}
-
-Quality Assessment:
-Distance CV < 0.1: {'✓' if distance_cv < 0.1 else '✗'} (Uniform)
-All corners found: {'✓' if len(final_corners) == 4 else '✗'}"""
+        # Add value labels on bars
+        for bar, distance in zip(bars, corner_distances):
+            ax11.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(corner_distances)*0.01,
+                     f'{distance:.1f}', ha='center', va='bottom', fontweight='bold')
         
-        ax11.text(0.1, 0.9, quality_text, transform=ax11.transAxes, 
-                 fontsize=10, verticalalignment='top', fontfamily='monospace')
+        # Add mean line
+        mean_distance = np.mean(corner_distances)
+        ax11.axhline(y=mean_distance, color='black', linestyle='--', alpha=0.7, label=f'Mean: {mean_distance:.1f}')
+        ax11.legend()
+    else:
+        ax11.text(0.5, 0.5, 'Need ≥3 corners\nfor distance analysis', ha='center', va='center', 
+                 transform=ax11.transAxes, fontsize=12)
+        ax11.set_title('Corner Distances from Centroid')
     
-    ax11.set_title('Quality Assessment')
-    
-    # 12. Issues and recommendations
+    # 12. Internal corner angles
     ax12 = plt.subplot(3, 4, 12)
-    ax12.axis('off')
     
-    issues = []
-    recommendations = []
-    
-    if analysis['input_data']['num_edge_points'] < 50:
-        issues.append("Too few edge points")
-        recommendations.append("Improve edge detection")
-    
-    if analysis['steps']['peak_detection']['peaks_found'] != 4:
-        issues.append(f"Peak detection found {analysis['steps']['peak_detection']['peaks_found']} peaks")
-        recommendations.append("Adjust peak detection threshold")
-    
-    if analysis['method_used'] == 'uniform_distribution':
-        issues.append("Fallback method used")
-        recommendations.append("Improve primary methods")
-    
-    if not issues:
-        issues.append("No major issues detected")
-        recommendations.append("Detection appears successful")
-    
-    issues_text = "Issues:\n" + "\n".join(f"• {issue}" for issue in issues[:3])
-    issues_text += "\n\nRecommendations:\n" + "\n".join(f"• {rec}" for rec in recommendations[:3])
-    
-    ax12.text(0.1, 0.9, issues_text, transform=ax12.transAxes, 
-             fontsize=9, verticalalignment='top')
-    ax12.set_title('Issues & Recommendations')
+    if len(final_corners) >= 3:
+        # Calculate internal angles between consecutive corners
+        corner_angles = []
+        for i in range(len(final_corners)):
+            prev_corner = final_corners[i-1]
+            curr_corner = final_corners[i]
+            next_corner = final_corners[(i+1) % len(final_corners)]
+            
+            # Vectors from current corner to adjacent corners
+            vec1 = np.array(prev_corner) - np.array(curr_corner)
+            vec2 = np.array(next_corner) - np.array(curr_corner)
+            
+            # Calculate angle between vectors
+            cos_angle = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+            cos_angle = np.clip(cos_angle, -1, 1)
+            angle_rad = np.arccos(cos_angle)
+            angle_deg = np.degrees(angle_rad)
+            
+            # Internal angle is 180° - calculated angle
+            internal_angle = 180 - angle_deg
+            corner_angles.append(internal_angle)
+        
+        corner_labels = [f'C{i+1}' for i in range(len(final_corners))]
+        bars = ax12.bar(corner_labels, corner_angles, color=['red', 'green', 'blue', 'orange'][:len(final_corners)])
+        ax12.set_title('Internal Corner Angles')
+        ax12.set_ylabel('Angle (degrees)')
+        ax12.grid(True, alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, angle in zip(bars, corner_angles):
+            ax12.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(corner_angles)*0.01,
+                     f'{angle:.1f}°', ha='center', va='bottom', fontweight='bold')
+        
+        # Add expected angle line for regular polygon
+        if len(final_corners) > 2:
+            expected_angle = 180 * (len(final_corners) - 2) / len(final_corners)
+            ax12.axhline(y=expected_angle, color='black', linestyle='--', alpha=0.7, 
+                        label=f'Expected: {expected_angle:.1f}°')
+            ax12.legend()
+    else:
+        ax12.text(0.5, 0.5, 'Need ≥3 corners\nfor angle analysis', ha='center', va='center', 
+                 transform=ax12.transAxes, fontsize=12)
+        ax12.set_title('Internal Corner Angles')
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'piece_{piece_idx+1}_corner_detection_breakdown.png'), 

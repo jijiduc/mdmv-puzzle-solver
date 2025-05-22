@@ -7,6 +7,7 @@ import os
 import time
 import cv2
 import numpy as np
+from typing import Dict, Any
 
 # Add src to path to allow imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -53,7 +54,7 @@ def main():
     
     # Setup output directories
     dirs = setup_output_directories()
-    output_dirs = (dirs['edges'], dirs['edge_types'], dirs['corners'], dirs['contours'])
+    output_dirs = (dirs['edges'], dirs['edge_types'], dirs['contours'])
     
     # Step 1: Input analysis
     with Timer("Input analysis"):
@@ -98,12 +99,13 @@ def main():
                 create_geometry_visualization(result, piece_img, i, dirs['geometry'])
                 
                 # Add detailed corner detection analysis
-                corner_analysis_dir = os.path.join(dirs['geometry'], 'corner_method_analysis')
+                corner_analysis_dir = os.path.join(dirs['geometry'], 'corner_analysis')
                 os.makedirs(corner_analysis_dir, exist_ok=True)
                 analyze_corner_detection_method(pieces[i], piece_img, i, corner_analysis_dir)
     
-    # Step 6: Create classification analysis
-    with Timer("Creating classification analysis"):
+    # Step 6: Basic edge visualization
+    with Timer("Creating edge visualization"):
+        # Create basic edge classification visualization
         create_edge_classification_visualization(piece_results, dirs['classification'])
     
     # Step 7: Create final summary
@@ -111,6 +113,7 @@ def main():
     with Timer("Creating summary dashboard"):
         create_summary_dashboard(piece_count, total_time, piece_results, dirs['base'])
         create_summary_report(piece_results, os.path.join(dirs['base'], 'detailed_report.txt'))
+        
     
     # TODO: Add edge matching and puzzle assembly
     # This would involve:
