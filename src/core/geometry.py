@@ -2,9 +2,8 @@
 
 import math
 import numpy as np
-import matplotlib.pyplot as plt
-import os
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
+from src.features.shape_analysis import classify_edge_shape
 
 
 
@@ -276,8 +275,8 @@ def calculate_edge_curvature(edge_points: List[Tuple[int, int]]) -> float:
 
 def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int], 
                  corner2: Tuple[int, int], centroid: Tuple[int, int], 
-                 piece_idx: int = -1, edge_idx: int = -1) -> Tuple[str, float]:
-    """Classify an edge as straight, intrusion, or extrusion using improved multi-scale analysis.
+                 piece_idx: int = -1, edge_idx: int = -1) -> Tuple[str, float, Optional[str], float]:
+    """Classify an edge as flat, convex, or concave with sub-type classification.
     
     Args:
         edge_points: List of edge point coordinates
@@ -286,22 +285,34 @@ def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int],
         centroid: Centroid coordinates
         
     Returns:
-        Tuple of (edge_type, max_deviation)
+        Tuple of (primary_type, max_deviation, sub_type, confidence)
+        - primary_type: "flat", "convex", or "concave"
+        - max_deviation: Maximum deviation from reference line
+        - sub_type: "symmetric", "asymmetric", or None
+        - confidence: Classification confidence (0-1)
     """
     if len(edge_points) == 0 or len(edge_points) < 5:
-        return "unknown", 0
+        return "unknown", 0, None, 0.0
     
+    # Convert edge points to numpy array
+    edge_points_np = np.array(edge_points)
     
-    # Create straight line between corners
+    # Create reference line from corner1 to corner2
+    reference_line = (np.array(corner1), np.array(corner2))
+    
+    # Use the new shape-based classification
+    primary_type, sub_type, confidence = classify_edge_shape(edge_points_np, reference_line)
+    
+    # Calculate max deviation for compatibility with existing code
     x1, y1 = corner1
     x2, y2 = corner2
-    centroid_x, centroid_y = centroid
     
     # Line vector
     line_vec = (x2-x1, y2-y1)
     line_length = math.sqrt(line_vec[0]**2 + line_vec[1]**2)
+    
     if line_length < 1:
-        return "unknown", 0
+        return primary_type, 0, sub_type, confidence
     
     # Normal vector
     normal_vec = (-line_vec[1]/line_length, line_vec[0]/line_length)
@@ -310,9 +321,8 @@ def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int],
     outward_normal = determine_outward_direction_robust(edge_points, corner1, corner2, centroid, normal_vec, 
                                                        piece_idx, edge_idx)
     
-    # Calculate deviations for all edge points
+    # Calculate deviations for max_deviation value
     deviations = []
-    
     for x, y in edge_points:
         # Vector from first corner to point
         point_vec = (x-x1, y-y1)
@@ -337,129 +347,19 @@ def classify_edge(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int],
             # Signed deviation
             signed_deviation = sign * deviation
             deviations.append(signed_deviation)
-            
     
-    # Multi-scale threshold analysis with balanced sensitivity
-    fine_threshold = max(3, line_length * 0.025)     # 2.5% for fine details (slightly more permissive)
-    coarse_threshold = max(8, line_length * 0.08)    # 8% for major features
-    straight_tolerance = max(4, line_length * 0.035) # 3.5% tolerance for nearly-straight edges
-    
-    # Classification
+    # Calculate max deviation based on edge type
     if deviations:
-        # Statistical calculations
-        mean_deviation = sum(deviations) / len(deviations)
-        abs_deviations = [abs(d) for d in deviations]
-        max_abs_deviation = max(abs_deviations)
-        
-        
-        # Pattern consistency analysis
-        max_consecutive_positive = count_consecutive_deviations(deviations, fine_threshold, 'positive')
-        max_consecutive_negative = count_consecutive_deviations(deviations, fine_threshold, 'negative')
-        
-        # Consistency ratios
-        total_points = len(deviations)
-        positive_consistency_ratio = max_consecutive_positive / total_points
-        negative_consistency_ratio = max_consecutive_negative / total_points
-        
-        # Count significant deviations at both scales
-        significant_positive_fine = sum(1 for d in deviations if d > fine_threshold)
-        significant_negative_fine = sum(1 for d in deviations if d < -fine_threshold)
-        significant_positive_coarse = sum(1 for d in deviations if d > coarse_threshold)
-        significant_negative_coarse = sum(1 for d in deviations if d < -coarse_threshold)
-        
-        # Deviation strength (magnitude of significant deviations)
-        positive_deviations = [d for d in deviations if d > fine_threshold]
-        negative_deviations = [d for d in deviations if d < -fine_threshold]
-        
-        positive_strength = np.mean(positive_deviations) if positive_deviations else 0
-        negative_strength = abs(np.mean(negative_deviations)) if negative_deviations else 0
-        
-        # Curvature analysis
-        curvature = calculate_edge_curvature(edge_points)
-        high_curvature = curvature > 0.1  # Threshold for high curvature
-        
-        
-        # Enhanced classification logic with balanced thresholds
-        
-        # 1. Very straight edges (using straight tolerance)
-        if max_abs_deviation < straight_tolerance:
-            edge_type = "straight"
-            max_deviation = mean_deviation
-            
-        # 2. Clear intrusions with strong pattern consistency
-        elif (negative_consistency_ratio > 0.25 and 
-              negative_strength > fine_threshold and
-              significant_negative_fine > significant_positive_fine * 1.5):
-            edge_type = "intrusion"
-            max_deviation = min(deviations)
-            
-        # 3. Clear extrusions with strong pattern consistency  
-        elif (positive_consistency_ratio > 0.25 and 
-              positive_strength > fine_threshold and
-              significant_positive_fine > significant_negative_fine * 1.5):
-            edge_type = "extrusion"
+        if primary_type == "convex":
             max_deviation = max(deviations)
-            
-        # 4. Consistent deviation with sufficient magnitude (coarse scale)
-        elif significant_negative_coarse > 0 and mean_deviation < -fine_threshold:
-            edge_type = "intrusion"
+        elif primary_type == "concave":
             max_deviation = min(deviations)
-            
-        elif significant_positive_coarse > 0 and mean_deviation > fine_threshold:
-            edge_type = "extrusion"
-            max_deviation = max(deviations)
-            
-        # 5. High curvature analysis for subtle intrusions
-        elif (high_curvature and 
-              max_consecutive_negative >= 3 and 
-              negative_strength > fine_threshold * 0.7):
-            edge_type = "intrusion"
-            max_deviation = min(deviations)
-            
-        elif (high_curvature and 
-              max_consecutive_positive >= 3 and 
-              positive_strength > fine_threshold * 0.7):
-            edge_type = "extrusion"
-            max_deviation = max(deviations)
-            
-        # 6. Nearly straight edges with minor deviations
-        elif (max_abs_deviation < coarse_threshold and 
-              abs(mean_deviation) < fine_threshold and
-              max(positive_consistency_ratio, negative_consistency_ratio) < 0.3):
-            edge_type = "straight"
-            max_deviation = mean_deviation
-            
-        # 7. Fallback: check for any significant deviations
-        elif max_abs_deviation > coarse_threshold:
-            if abs(mean_deviation) < fine_threshold * 0.5:
-                # Balanced but significant deviations - choose dominant direction
-                if significant_negative_fine > significant_positive_fine:
-                    edge_type = "intrusion"
-                    max_deviation = min(deviations)
-                elif significant_positive_fine > significant_negative_fine:
-                    edge_type = "extrusion"
-                    max_deviation = max(deviations)
-                else:
-                    edge_type = "straight"
-                    max_deviation = mean_deviation
-            elif mean_deviation > 0:
-                edge_type = "extrusion"
-                max_deviation = max(deviations)
-            else:
-                edge_type = "intrusion"
-                max_deviation = min(deviations)
-        
-        # 8. Default to straight if no clear pattern
-        else:
-            edge_type = "straight"
-            max_deviation = mean_deviation
-            
+        else:  # flat
+            max_deviation = sum(deviations) / len(deviations)
     else:
-        edge_type = "unknown"
         max_deviation = 0
     
-    
-    return edge_type, max_deviation
+    return primary_type, max_deviation, sub_type, confidence
 
 
 def sort_edge_points(edge_points: List[Tuple[int, int]], corner1: Tuple[int, int], 

@@ -19,7 +19,9 @@ from src.utils.io_operations import save_masks, save_pieces, create_summary_repo
 from src.utils.visualization import (
     create_input_visualization, 
     create_edge_classification_visualization,
-    create_summary_dashboard
+    create_summary_dashboard,
+    create_shape_analysis_visualization,
+    create_shape_summary_visualization
 )
 from src.utils.corner_analysis import analyze_corner_detection_method
 
@@ -97,7 +99,44 @@ def main():
             # Update corners if they were found
             if 'corners' in result:
                 piece.corners = result['corners']
-            # The edges are already set during processing via piece.add_edge()
+            
+            # Re-process edges to get updated classification data
+            # Since the parallel processing doesn't return the updated piece object,
+            # we need to reconstruct the edge data from the results
+            if ('edge_types' in result and 'edge_deviations' in result and 
+                'edge_sub_types' in result and 'edge_confidences' in result and
+                'edge_points' in result):
+                
+                edge_types = result['edge_types'] 
+                edge_deviations = result['edge_deviations']
+                edge_sub_types = result['edge_sub_types']
+                edge_confidences = result['edge_confidences']
+                edge_points_list = result['edge_points']
+                
+                # If piece has no edges (parallel processing issue), create them from result data
+                if len(piece.edges) == 0 and len(edge_types) > 0:
+                    from src.core.piece import EdgeSegment
+                    for edge_idx in range(len(edge_types)):
+                        edge_segment = EdgeSegment(
+                            edge_type=edge_types[edge_idx],
+                            deviation=edge_deviations[edge_idx],
+                            sub_type=edge_sub_types[edge_idx],
+                            confidence=edge_confidences[edge_idx],
+                            points=edge_points_list[edge_idx] if edge_idx < len(edge_points_list) else [],
+                            length=len(edge_points_list[edge_idx]) if edge_idx < len(edge_points_list) else 0
+                        )
+                        piece.add_edge(edge_segment)
+                else:
+                    # Update existing edges with the classification results
+                    for edge_idx, edge in enumerate(piece.edges):
+                        if edge_idx < len(edge_types):
+                            edge.edge_type = edge_types[edge_idx]
+                            edge.deviation = edge_deviations[edge_idx]
+                            edge.sub_type = edge_sub_types[edge_idx]
+                            edge.confidence = edge_confidences[edge_idx]
+                            if edge_idx < len(edge_points_list):
+                                edge.points = edge_points_list[edge_idx]
+                                edge.length = len(edge_points_list[edge_idx])
     
     # Step 5: Create geometry visualizations
     with Timer("Creating geometry visualizations"):
@@ -110,9 +149,22 @@ def main():
                 os.makedirs(corner_analysis_dir, exist_ok=True)
                 analyze_corner_detection_method(piece.to_dict(), piece.image, i, corner_analysis_dir)
     
-    # Step 6: Basic edge visualization
-    with Timer("Creating edge visualization"):
-        # Create basic edge classification visualization
+    # Step 6: Shape analysis visualization
+    with Timer("Creating shape analysis visualizations"):
+        # Create shape analysis directory
+        shape_dir = os.path.join(dirs['features'], 'shape')
+        os.makedirs(shape_dir, exist_ok=True)
+        
+        # Create individual piece shape analysis
+        for i, result in enumerate(piece_results):
+            if result and i < len(pieces):
+                piece = pieces[i]
+                create_shape_analysis_visualization(piece, i, shape_dir)
+        
+        # Create shape summary visualization
+        create_shape_summary_visualization(pieces, shape_dir)
+        
+        # Create basic edge classification visualization (legacy)
         create_edge_classification_visualization(piece_results, dirs['classification'])
     
     # Step 7: Create final summary

@@ -11,8 +11,10 @@ class EdgeSegment:
     points: List[Tuple[int, int]] = field(default_factory=list)
     corner1: Optional[Tuple[int, int]] = None
     corner2: Optional[Tuple[int, int]] = None
-    edge_type: str = "unknown"  # straight/intrusion/extrusion
+    edge_type: str = "unknown"  # flat/convex/concave
+    sub_type: Optional[str] = None  # symmetric/asymmetric
     deviation: float = 0.0
+    confidence: float = 0.0  # classification confidence
     length: float = 0.0
     curvature: float = 0.0
     color_sequence: List[List[float]] = field(default_factory=list)  # LAB color sequence
@@ -149,11 +151,11 @@ class Piece:
             return
         
         # Count edge types
-        straight_count = sum(1 for edge in self.edges if edge.edge_type == "straight")
+        straight_count = sum(1 for edge in self.edges if edge.edge_type == "flat")
         
         if straight_count == 2:
             # Check if straight edges are adjacent (corner piece)
-            straight_indices = [i for i, edge in enumerate(self.edges) if edge.edge_type == "straight"]
+            straight_indices = [i for i, edge in enumerate(self.edges) if edge.edge_type == "flat"]
             if len(straight_indices) == 2:
                 diff = abs(straight_indices[1] - straight_indices[0])
                 if diff == 1 or diff == 3:  # Adjacent edges
@@ -230,7 +232,9 @@ class Piece:
             'edges': [
                 {
                     'edge_type': edge.edge_type,
+                    'sub_type': edge.sub_type,
                     'deviation': edge.deviation,
+                    'confidence': edge.confidence,
                     'length': edge.length,
                     'curvature': edge.curvature,
                     'edge_idx': edge.edge_idx

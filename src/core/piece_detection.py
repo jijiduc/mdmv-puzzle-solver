@@ -78,6 +78,9 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
     # Extract edges between consecutive corners
     edge_types = []
     edge_deviations = []
+    edge_sub_types = []
+    edge_confidences = []
+    edge_points_list = []
     edge_colors = []
     
     for i in range(len(corners)):
@@ -98,12 +101,17 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
         
         if len(edge_points) > 0:
             # Classify edge type (pass piece and edge indices for debug)
-            edge_type, deviation = classify_edge(edge_points, corners[i], corners[next_i], centroid, 
-                                                piece_index, i)
+            edge_type, deviation, sub_type, confidence = classify_edge(edge_points, corners[i], corners[next_i], centroid, 
+                                                                      piece_index, i)
             edge_segment.edge_type = edge_type
             edge_segment.deviation = deviation
+            edge_segment.sub_type = sub_type
+            edge_segment.confidence = confidence
             edge_types.append(edge_type)
             edge_deviations.append(deviation)
+            edge_sub_types.append(sub_type)
+            edge_confidences.append(confidence)
+            edge_points_list.append(edge_points)
             
             # Extract edge features
             edge_features = extract_dtw_edge_features(piece_img, edge_points, 
@@ -122,6 +130,9 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
         else:
             edge_types.append("unknown")
             edge_deviations.append(0)
+            edge_sub_types.append(None)
+            edge_confidences.append(0.0)
+            edge_points_list.append([])
             edge_colors.append({})
         
         # Add edge to piece
@@ -137,6 +148,9 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
         'piece_idx': piece_index,
         'edge_types': edge_types,
         'edge_deviations': edge_deviations,
+        'edge_sub_types': edge_sub_types,
+        'edge_confidences': edge_confidences,
+        'edge_points': edge_points_list,
         'edge_colors': edge_colors,
         'corners': corners,
         'centroid': centroid,
