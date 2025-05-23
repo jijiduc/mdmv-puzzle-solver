@@ -1121,3 +1121,504 @@ def create_classification_validation(pieces: List[Any], output_dir: str):
     plt.close()
 
 
+def create_edge_color_visualizations(pieces: List[Any], output_base_dir: str):
+    """Create comprehensive edge color visualizations.
+    
+    Args:
+        pieces: List of Piece objects with color data
+        output_base_dir: Base output directory
+    """
+    # Create color visualization directory structure
+    color_dir = os.path.join(output_base_dir, '06_features', 'color')
+    pieces_dir = os.path.join(color_dir, 'pieces')
+    
+    os.makedirs(pieces_dir, exist_ok=True)
+    
+    # Create visualizations for each piece
+    for piece in pieces:
+        if hasattr(piece, 'edges') and len(piece.edges) > 0:
+            create_piece_color_strips(piece, pieces_dir)
+            create_piece_color_wheel(piece, pieces_dir)
+            create_piece_color_summary_card(piece, pieces_dir)
+    
+    print(f"Created edge color visualizations in {color_dir}")
+
+
+def create_piece_color_strips(piece: Any, output_dir: str):
+    """Create color strip visualization for a piece's edges.
+    
+    Args:
+        piece: Piece object with edge color data
+        output_dir: Output directory
+    """
+    # Calculate layout
+    n_edges = len(piece.edges)
+    strip_height = 60
+    strip_spacing = 20
+    
+    # Create figure
+    fig_width = 12
+    fig_height = (n_edges * (strip_height * 2 + strip_spacing) + 100) / 100  # Convert to inches
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    
+    # Title
+    ax.text(0.5, 0.98, f'Edge Color Sequences - Piece #{piece.index + 1}', 
+            transform=ax.transAxes, ha='center', va='top', fontsize=14, fontweight='bold')
+    
+    # Add piece thumbnail
+    thumb_size = 0.15
+    thumb_ax = fig.add_axes([0.02, 0.85, thumb_size, thumb_size])
+    thumb_ax.imshow(piece.image)
+    thumb_ax.axis('off')
+    thumb_ax.set_title('Piece', fontsize=10)
+    
+    # Process each edge
+    y_offset = 0.8
+    for edge_idx, edge in enumerate(piece.edges):
+        # Edge label
+        edge_type_str = f"{edge.edge_type}" + (f" ({edge.sub_type})" if edge.sub_type else "")
+        ax.text(0.02, y_offset, f'Edge {edge_idx + 1}: {edge_type_str}',
+                transform=ax.transAxes, fontsize=11, fontweight='bold')
+        
+        # Check if color sequence exists
+        if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+            color_seq = edge.color_sequence
+            confidence_seq = edge.confidence_sequence if hasattr(edge, 'confidence_sequence') else [1.0] * len(color_seq)
+            
+            # Ensure we have valid data
+            if len(color_seq) > 0 and all(len(c) == 3 for c in color_seq if isinstance(c, (list, np.ndarray))):
+                # Create color strips
+                n_colors = len(color_seq)
+                
+                # LAB to BGR conversion for display
+                lab_array = np.array(color_seq, dtype=np.uint8).reshape(-1, 1, 3)
+                bgr_array = cv2.cvtColor(lab_array, cv2.COLOR_LAB2BGR)
+                rgb_array = cv2.cvtColor(bgr_array, cv2.COLOR_BGR2RGB)
+                
+                # Create strip images
+                strip_width = int(fig_width * 100 * 0.8)  # 80% of figure width
+                
+                # Top strip: Original colors with confidence as alpha
+                for i in range(n_colors):
+                    x_start = 0.15 + (i / n_colors) * 0.8
+                    x_width = 0.8 / n_colors
+                    
+                    # Color rectangle
+                    color = rgb_array[i, 0] / 255.0
+                    alpha = confidence_seq[i] if i < len(confidence_seq) else 1.0
+                    
+                    rect = plt.Rectangle((x_start, y_offset - 0.06), x_width, 0.04,
+                                       transform=ax.transAxes, facecolor=color, 
+                                       alpha=alpha, edgecolor='none')
+                    ax.add_patch(rect)
+                
+                # Bottom strip: Gradient representation
+                gradient_y = y_offset - 0.12
+                for i in range(n_colors - 1):
+                    x_start = 0.15 + (i / n_colors) * 0.8
+                    x_width = 0.8 / n_colors
+                    
+                    # Create gradient between consecutive colors
+                    color1 = rgb_array[i, 0] / 255.0
+                    color2 = rgb_array[i + 1, 0] / 255.0
+                    
+                    # Simple gradient using multiple rectangles
+                    n_steps = 10
+                    for j in range(n_steps):
+                        t = j / n_steps
+                        interp_color = color1 * (1 - t) + color2 * t
+                        
+                        rect = plt.Rectangle((x_start + (j / n_steps) * x_width, gradient_y), 
+                                           x_width / n_steps, 0.04,
+                                           transform=ax.transAxes, facecolor=interp_color, 
+                                           edgecolor='none')
+                        ax.add_patch(rect)
+                
+                # Add labels
+                ax.text(0.02, y_offset - 0.04, 'Colors:', transform=ax.transAxes, fontsize=9)
+                ax.text(0.02, y_offset - 0.10, 'Gradient:', transform=ax.transAxes, fontsize=9)
+                
+                # Add confidence indicator
+                avg_confidence = np.mean(confidence_seq) if confidence_seq else 1.0
+                ax.text(0.96, y_offset - 0.04, f'Conf: {avg_confidence:.2f}', 
+                       transform=ax.transAxes, fontsize=9, ha='right')
+            else:
+                ax.text(0.15, y_offset - 0.06, 'No valid color data available', 
+                       transform=ax.transAxes, fontsize=10, style='italic', color='gray')
+        else:
+            ax.text(0.15, y_offset - 0.06, 'No color sequence extracted', 
+                   transform=ax.transAxes, fontsize=10, style='italic', color='gray')
+        
+        # Move to next edge position
+        y_offset -= 0.2
+    
+    # Remove axes
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis('off')
+    
+    # Save
+    # Don't use tight_layout with custom axes positioning
+    plt.savefig(os.path.join(output_dir, f'piece_{piece.index + 1:03d}_color_strips.png'), 
+                dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def create_piece_color_wheel(piece: Any, output_dir: str):
+    """Create color wheel visualization for a piece's edges.
+    
+    Args:
+        piece: Piece object with edge color data
+        output_dir: Output directory
+    """
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
+    
+    # Title
+    fig.suptitle(f'Edge Color Wheel - Piece #{piece.index + 1}', fontsize=14, fontweight='bold')
+    
+    # Prepare data
+    total_points = 0
+    edge_starts = []
+    all_colors = []
+    all_confidences = []
+    
+    # Collect all edge colors
+    for edge_idx, edge in enumerate(piece.edges):
+        edge_starts.append(total_points)
+        
+        if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+            color_seq = edge.color_sequence
+            confidence_seq = edge.confidence_sequence if hasattr(edge, 'confidence_sequence') else [1.0] * len(color_seq)
+            
+            # Convert LAB to RGB for display
+            if len(color_seq) > 0 and all(len(c) == 3 for c in color_seq if isinstance(c, (list, np.ndarray))):
+                lab_array = np.array(color_seq, dtype=np.uint8).reshape(-1, 1, 3)
+                bgr_array = cv2.cvtColor(lab_array, cv2.COLOR_LAB2BGR)
+                rgb_array = cv2.cvtColor(bgr_array, cv2.COLOR_BGR2RGB)
+                
+                for i in range(len(color_seq)):
+                    all_colors.append(rgb_array[i, 0] / 255.0)
+                    all_confidences.append(confidence_seq[i] if i < len(confidence_seq) else 1.0)
+                    total_points += 1
+            else:
+                # Add placeholder for missing data
+                all_colors.append([0.5, 0.5, 0.5])
+                all_confidences.append(0.0)
+                total_points += 1
+        else:
+            # Add placeholder for missing edge
+            all_colors.append([0.5, 0.5, 0.5])
+            all_confidences.append(0.0)
+            total_points += 1
+    
+    if total_points == 0:
+        ax.text(0, 0, 'No color data available', ha='center', va='center', fontsize=12)
+        plt.savefig(os.path.join(output_dir, f'piece_{piece.index + 1:03d}_color_wheel.png'), 
+                    dpi=150, bbox_inches='tight')
+        plt.close()
+        return
+    
+    # Create angular positions
+    angles = np.linspace(0, 2 * np.pi, total_points, endpoint=False)
+    
+    # Plot color segments
+    for i in range(total_points):
+        # Calculate segment
+        angle_start = angles[i]
+        angle_end = angles[(i + 1) % total_points] if i < total_points - 1 else 2 * np.pi
+        
+        # Radius based on confidence
+        inner_radius = 0.5
+        outer_radius = 0.5 + 0.4 * all_confidences[i]
+        
+        # Create wedge
+        theta = np.linspace(angle_start, angle_end, 20)
+        r_inner = np.full_like(theta, inner_radius)
+        r_outer = np.full_like(theta, outer_radius)
+        
+        # Plot colored segment
+        ax.fill_between(theta, r_inner, r_outer, color=all_colors[i], alpha=0.8)
+    
+    # Add edge boundaries
+    edge_colors_map = {'flat': 'green', 'convex': 'red', 'concave': 'blue', 'unknown': 'gray'}
+    for edge_idx, (edge, start_idx) in enumerate(zip(piece.edges, edge_starts)):
+        if start_idx < len(angles):
+            angle = angles[start_idx]
+            edge_color = edge_colors_map.get(edge.edge_type, 'gray')
+            
+            # Draw edge boundary line
+            ax.plot([angle, angle], [0.4, 1.0], color=edge_color, linewidth=2, alpha=0.7)
+            
+            # Add edge label
+            label_angle = angle + (angles[(start_idx + 1) % len(angles)] - angle) / 2 if start_idx < len(angles) - 1 else angle
+            ax.text(label_angle, 1.1, f'E{edge_idx + 1}', ha='center', va='center', 
+                   fontweight='bold', fontsize=10)
+    
+    # Add center piece thumbnail
+    # Convert piece image to thumbnail
+    thumb_size = 100
+    piece_img_rgb = cv2.cvtColor(piece.image, cv2.COLOR_BGR2RGB)
+    
+    # Find piece bounds
+    mask = piece.mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        x, y, w, h = cv2.boundingRect(contours[0])
+        cropped = piece_img_rgb[y:y+h, x:x+w]
+        
+        # Resize to fit
+        scale = min(thumb_size / w, thumb_size / h)
+        new_size = (int(w * scale), int(h * scale))
+        if new_size[0] > 0 and new_size[1] > 0:
+            thumbnail = cv2.resize(cropped, new_size)
+            
+            # Create inset axes for thumbnail
+            axin = fig.add_axes([0.425, 0.425, 0.15, 0.15])
+            axin.imshow(thumbnail)
+            axin.axis('off')
+    
+    # Customize plot
+    ax.set_ylim(0, 1.2)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+    
+    # Add legend
+    legend_elements = [
+        plt.Line2D([0], [0], color='green', lw=2, label='Flat edge'),
+        plt.Line2D([0], [0], color='red', lw=2, label='Convex edge'),
+        plt.Line2D([0], [0], color='blue', lw=2, label='Concave edge')
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.1, 1.1))
+    
+    # Don't use tight_layout with polar plots and custom inset axes
+    plt.savefig(os.path.join(output_dir, f'piece_{piece.index + 1:03d}_color_wheel.png'), 
+                dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def create_piece_color_summary_card(piece: Any, output_dir: str):
+    """Create comprehensive color summary card for a piece.
+    
+    Args:
+        piece: Piece object with edge color data
+        output_dir: Output directory
+    """
+    fig = plt.figure(figsize=(12, 10))
+    
+    # Main title
+    fig.suptitle(f'Color Feature Summary - Piece #{piece.index + 1} ({piece.piece_type})', 
+                 fontsize=16, fontweight='bold')
+    
+    # Create grid layout
+    gs = fig.add_gridspec(3, 3, height_ratios=[1, 1.5, 1], width_ratios=[1, 1, 1],
+                         hspace=0.3, wspace=0.3)
+    
+    # 1. Piece image with edge numbers (top left)
+    ax_piece = fig.add_subplot(gs[0, 0])
+    piece_img_rgb = cv2.cvtColor(piece.image, cv2.COLOR_BGR2RGB)
+    ax_piece.imshow(piece_img_rgb)
+    
+    # Add edge numbers on the image
+    if hasattr(piece, 'edges') and hasattr(piece, 'centroid'):
+        cx, cy = piece.centroid
+        for edge_idx, edge in enumerate(piece.edges):
+            if hasattr(edge, 'points') and len(edge.points) > 0:
+                # Get middle point of edge
+                mid_idx = len(edge.points) // 2
+                mid_x, mid_y = edge.points[mid_idx]
+                
+                # Draw arrow from centroid to edge
+                dx = mid_x - cx
+                dy = mid_y - cy
+                ax_piece.annotate(f'{edge_idx+1}', xy=(mid_x, mid_y), xytext=(cx + dx*0.5, cy + dy*0.5),
+                                arrowprops=dict(arrowstyle='->', color='yellow', lw=2),
+                                fontsize=12, fontweight='bold', color='yellow',
+                                bbox=dict(boxstyle='circle,pad=0.3', facecolor='black', alpha=0.7))
+    
+    ax_piece.set_title('Piece with Edge Numbers', fontsize=11)
+    ax_piece.axis('off')
+    
+    # 2. Edge type legend (top center)
+    ax_legend = fig.add_subplot(gs[0, 1])
+    ax_legend.axis('off')
+    
+    legend_text = "Edge Types:\n"
+    edge_info = []
+    for edge_idx, edge in enumerate(piece.edges):
+        edge_type_str = f"{edge.edge_type}" + (f" ({edge.sub_type})" if edge.sub_type else "")
+        edge_info.append(f"Edge {edge_idx + 1}: {edge_type_str}")
+    
+    ax_legend.text(0.1, 0.9, '\n'.join(edge_info), transform=ax_legend.transAxes,
+                  fontsize=10, verticalalignment='top', fontfamily='monospace')
+    ax_legend.set_title('Edge Classification', fontsize=11)
+    
+    # 3. Color statistics (top right)
+    ax_stats = fig.add_subplot(gs[0, 2])
+    ax_stats.axis('off')
+    
+    stats_text = "Color Statistics:\n"
+    total_colors = 0
+    avg_confidence = 0
+    confidence_count = 0
+    
+    for edge in piece.edges:
+        if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+            total_colors += len(edge.color_sequence)
+            if hasattr(edge, 'confidence_sequence'):
+                avg_confidence += sum(edge.confidence_sequence)
+                confidence_count += len(edge.confidence_sequence)
+    
+    stats_text += f"Total color samples: {total_colors}\n"
+    if confidence_count > 0:
+        stats_text += f"Avg confidence: {avg_confidence/confidence_count:.3f}\n"
+    
+    ax_stats.text(0.1, 0.9, stats_text, transform=ax_stats.transAxes,
+                 fontsize=10, verticalalignment='top', fontfamily='monospace')
+    ax_stats.set_title('Statistics', fontsize=11)
+    
+    # 4. Color strips for all edges (middle section)
+    ax_strips = fig.add_subplot(gs[1, :])
+    ax_strips.set_title('Edge Color Sequences', fontsize=12, pad=10)
+    
+    # Draw color strips
+    n_edges = len(piece.edges)
+    if n_edges > 0:
+        strip_height = 0.8 / n_edges
+        
+        for edge_idx, edge in enumerate(piece.edges):
+            y_base = 0.9 - (edge_idx + 0.5) * strip_height
+            
+            # Edge label
+            edge_label = f'E{edge_idx + 1}'
+            ax_strips.text(0.02, y_base, edge_label, transform=ax_strips.transAxes,
+                          fontsize=10, fontweight='bold', va='center')
+            
+            if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+                color_seq = edge.color_sequence
+                n_colors = len(color_seq)
+                
+                # Convert colors for display
+                try:
+                    lab_array = np.array(color_seq, dtype=np.uint8).reshape(-1, 1, 3)
+                    bgr_array = cv2.cvtColor(lab_array, cv2.COLOR_LAB2BGR)
+                    rgb_array = cv2.cvtColor(bgr_array, cv2.COLOR_BGR2RGB)
+                    
+                    # Draw color boxes
+                    box_width = 0.85 / max(n_colors, 1)
+                    for i in range(n_colors):
+                        x_pos = 0.1 + i * box_width
+                        color = rgb_array[i, 0] / 255.0
+                        
+                        rect = plt.Rectangle((x_pos, y_base - strip_height * 0.3), 
+                                           box_width * 0.9, strip_height * 0.6,
+                                           transform=ax_strips.transAxes, 
+                                           facecolor=color, edgecolor='black', linewidth=0.5)
+                        ax_strips.add_patch(rect)
+                except:
+                    ax_strips.text(0.1, y_base, 'Error processing colors', 
+                                 transform=ax_strips.transAxes, fontsize=9, 
+                                 style='italic', color='red')
+            else:
+                ax_strips.text(0.1, y_base, 'No color data', 
+                             transform=ax_strips.transAxes, fontsize=9, 
+                             style='italic', color='gray')
+    
+    ax_strips.set_xlim(0, 1)
+    ax_strips.set_ylim(0, 1)
+    ax_strips.axis('off')
+    
+    # 5. Mean colors per edge (bottom left)
+    ax_means = fig.add_subplot(gs[2, 0])
+    ax_means.set_title('Mean Edge Colors', fontsize=11)
+    
+    mean_colors = []
+    edge_labels = []
+    
+    for edge_idx, edge in enumerate(piece.edges):
+        if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+            # Calculate mean color
+            mean_lab = np.mean(edge.color_sequence, axis=0)
+            mean_lab_uint = np.array(mean_lab, dtype=np.uint8).reshape(1, 1, 3)
+            mean_bgr = cv2.cvtColor(mean_lab_uint, cv2.COLOR_LAB2BGR)
+            mean_rgb = cv2.cvtColor(mean_bgr, cv2.COLOR_BGR2RGB)[0, 0] / 255.0
+            
+            mean_colors.append(mean_rgb)
+            edge_labels.append(f'E{edge_idx + 1}')
+    
+    if mean_colors:
+        # Create color swatches
+        n_swatches = len(mean_colors)
+        for i, (color, label) in enumerate(zip(mean_colors, edge_labels)):
+            y_pos = 0.8 - (i / max(n_swatches - 1, 1)) * 0.7
+            
+            # Color swatch
+            rect = plt.Rectangle((0.2, y_pos - 0.05), 0.4, 0.1,
+                               transform=ax_means.transAxes, 
+                               facecolor=color, edgecolor='black', linewidth=1)
+            ax_means.add_patch(rect)
+            
+            # Label
+            ax_means.text(0.1, y_pos, label, transform=ax_means.transAxes,
+                         fontsize=10, va='center', ha='right')
+    
+    ax_means.set_xlim(0, 1)
+    ax_means.set_ylim(0, 1)
+    ax_means.axis('off')
+    
+    # 6. Color variance visualization (bottom center)
+    ax_var = fig.add_subplot(gs[2, 1])
+    ax_var.set_title('Color Variance by Edge', fontsize=11)
+    
+    edge_names = []
+    variances = []
+    
+    for edge_idx, edge in enumerate(piece.edges):
+        if hasattr(edge, 'color_sequence') and len(edge.color_sequence) > 0:
+            # Calculate variance for each channel
+            color_array = np.array(edge.color_sequence)
+            channel_vars = np.std(color_array, axis=0)
+            total_var = np.mean(channel_vars)
+            
+            edge_names.append(f'E{edge_idx + 1}')
+            variances.append(total_var)
+    
+    if variances:
+        bars = ax_var.bar(edge_names, variances, color='orange', alpha=0.7)
+        ax_var.set_ylabel('Color Variance')
+        ax_var.set_xlabel('Edge')
+        
+        # Add value labels
+        for bar, var in zip(bars, variances):
+            height = bar.get_height()
+            ax_var.text(bar.get_x() + bar.get_width()/2., height,
+                       f'{var:.1f}', ha='center', va='bottom', fontsize=9)
+    else:
+        ax_var.text(0.5, 0.5, 'No variance data', ha='center', va='center',
+                   transform=ax_var.transAxes, fontsize=10, style='italic')
+    
+    # 7. Edge matching hints (bottom right)
+    ax_hints = fig.add_subplot(gs[2, 2])
+    ax_hints.axis('off')
+    ax_hints.set_title('Matching Hints', fontsize=11)
+    
+    hints_text = "Edge Matching Potential:\n\n"
+    
+    # Analyze edge types for matching
+    for edge_idx, edge in enumerate(piece.edges):
+        if edge.edge_type == 'flat':
+            hints_text += f"E{edge_idx + 1}: Border edge\n"
+        elif edge.edge_type == 'convex':
+            hints_text += f"E{edge_idx + 1}: Needs concave match\n"
+        elif edge.edge_type == 'concave':
+            hints_text += f"E{edge_idx + 1}: Needs convex match\n"
+    
+    ax_hints.text(0.1, 0.9, hints_text, transform=ax_hints.transAxes,
+                 fontsize=9, verticalalignment='top', fontfamily='monospace')
+    
+    # Don't use tight_layout with GridSpec and complex layouts
+    plt.savefig(os.path.join(output_dir, f'piece_{piece.index + 1:03d}_color_summary.png'), 
+                dpi=150, bbox_inches='tight')
+    plt.close()
+
+

@@ -22,7 +22,8 @@ from src.utils.visualization import (
     create_summary_dashboard,
     create_shape_analysis_visualization,
     create_shape_summary_visualization,
-    create_piece_classification_visualizations
+    create_piece_classification_visualizations,
+    create_edge_color_visualizations
 )
 from src.utils.corner_analysis import analyze_corner_detection_method
 
@@ -113,6 +114,7 @@ def main():
                 edge_sub_types = result['edge_sub_types']
                 edge_confidences = result['edge_confidences']
                 edge_points_list = result['edge_points']
+                edge_colors = result.get('edge_colors', [])
                 
                 # If piece has no edges (parallel processing issue), create them from result data
                 if len(piece.edges) == 0 and len(edge_types) > 0:
@@ -126,6 +128,15 @@ def main():
                             points=edge_points_list[edge_idx] if edge_idx < len(edge_points_list) else [],
                             length=len(edge_points_list[edge_idx]) if edge_idx < len(edge_points_list) else 0
                         )
+                        
+                        # Add color features if available
+                        if edge_idx < len(edge_colors) and edge_colors[edge_idx]:
+                            edge_color_data = edge_colors[edge_idx]
+                            if 'color_sequence' in edge_color_data:
+                                edge_segment.color_sequence = edge_color_data['color_sequence']
+                            if 'confidence_sequence' in edge_color_data:
+                                edge_segment.confidence_sequence = edge_color_data['confidence_sequence']
+                        
                         piece.add_edge(edge_segment)
                 else:
                     # Update existing edges with the classification results
@@ -138,6 +149,14 @@ def main():
                             if edge_idx < len(edge_points_list):
                                 edge.points = edge_points_list[edge_idx]
                                 edge.length = len(edge_points_list[edge_idx])
+                            
+                            # Update color features if available
+                            if edge_idx < len(edge_colors) and edge_colors[edge_idx]:
+                                edge_color_data = edge_colors[edge_idx]
+                                if 'color_sequence' in edge_color_data:
+                                    edge.color_sequence = edge_color_data['color_sequence']
+                                if 'confidence_sequence' in edge_color_data:
+                                    edge.confidence_sequence = edge_color_data['confidence_sequence']
             
             # Re-classify piece type after edges are updated
             piece._classify_piece_type()
@@ -175,7 +194,11 @@ def main():
     with Timer("Creating piece classification visualizations"):
         create_piece_classification_visualizations(pieces, dirs['base'])
     
-    # Step 8: Create final summary
+    # Step 8: Edge color visualizations
+    with Timer("Creating edge color visualizations"):
+        create_edge_color_visualizations(pieces, dirs['base'])
+    
+    # Step 9: Create final summary
     total_time = time.time() - start_time
     with Timer("Creating summary dashboard"):
         create_summary_dashboard(piece_count, total_time, piece_results, dirs['base'])

@@ -9,8 +9,9 @@ This project implements a complete pipeline for analyzing jigsaw puzzle pieces f
 2. **Corner Detection**: Uses polar distance profile analysis to find the 4 corners of each piece
 3. **Edge Extraction**: Extracts edge segments between corners for feature analysis
 4. **Shape Classification**: Advanced edge shape analysis using curvature profiles and mathematical classification
-5. **Piece Classification**: Classifies pieces as corner, edge, or middle pieces based on their edges
-6. **Visualization**: Provides comprehensive visualization tools for debugging and analysis
+5. **Color Feature Extraction**: Captures LAB color sequences along edges for matching
+6. **Piece Classification**: Classifies pieces as corner, edge, or middle pieces based on their edges
+7. **Visualization**: Provides comprehensive visualization tools for debugging and analysis
 
 ## Features
 
@@ -18,9 +19,10 @@ This project implements a complete pipeline for analyzing jigsaw puzzle pieces f
 - **Accurate Corner Detection**: Implements polar distance profile analysis to find true puzzle piece corners
 - **Advanced Shape Classification**: Multi-metric edge analysis combining curvature profiles and distance measurements
 - **Mathematical Edge Types**: Uses proper mathematical terminology (flat, convex, concave) with sub-type classification
+- **Color Feature Extraction**: LAB color space edge descriptors with confidence scoring for robust matching
 - **Object-Oriented Design**: Clean architecture with `Piece` and `EdgeSegment` classes
 - **Parallel Processing**: Utilizes multiprocessing for efficient analysis of multiple pieces
-- **Comprehensive Visualization**: Debug views for each processing step including detailed shape analysis
+- **Comprehensive Visualization**: Debug views for each processing step including detailed shape and color analysis
 
 ## Installation
 
@@ -134,7 +136,20 @@ Edges are extracted between detected corners and analyzed using advanced shape c
   - **Asymmetric**: Irregular, unbalanced shapes
 - Provides confidence scoring (0-1) for classification reliability
 
-### 4. Piece Classification
+### 4. Edge Color Feature Extraction
+
+Color descriptors are extracted for each edge to support future matching:
+- Samples colors along edge points with configurable radius
+- Converts BGR to LAB color space for perceptual accuracy
+- Calculates confidence based on local color variance
+- Normalizes color sequences for consistent matching
+- Stores both color sequences and confidence scores per edge
+- Provides comprehensive visualizations:
+  - Color strips showing actual edge colors
+  - Polar color wheel visualization
+  - Statistical analysis of color features
+
+### 5. Piece Classification
 
 Pieces are classified based on their edge characteristics:
 - **Corner pieces**: 2 flat edges
@@ -153,11 +168,16 @@ The program generates comprehensive debug visualizations organized by processing
 5. **05_geometry/**: Corner detection analysis and geometric features
 
 ### Advanced Analysis
-6. **06_features/shape/**: Detailed shape analysis for each piece:
-   - **Edge profiles**: Curvature plots for all 4 edges
-   - **Classification**: Visual edge type classification with color coding
-   - **Shape metrics**: Symmetry scores, confidence levels, and radar charts
-   - **Summary**: Overall statistics and edge type distribution
+6. **06_features/**: Feature extraction and analysis
+   - **shape/**: Detailed shape analysis for each piece:
+     - **Edge profiles**: Curvature plots for all 4 edges
+     - **Classification**: Visual edge type classification with color coding
+     - **Shape metrics**: Symmetry scores, confidence levels, and radar charts
+     - **Summary**: Overall statistics and edge type distribution
+   - **color/pieces/**: Edge color descriptor visualizations:
+     - **Color strips**: Color sequences along each edge with confidence scores
+     - **Color wheel**: Polar visualization of colors around piece perimeter
+     - **Summary card**: Comprehensive color analysis including mean colors, variance, and matching hints
 
 ### Final Results
 7. **07_piece_classification/**: Piece type classification (corner/edge/middle)
@@ -193,13 +213,16 @@ class EdgeSegment:
     deviation: float                 # Maximum deviation from reference line
     length: int                      # Number of edge points
     curvature: Optional[float]       # Average curvature measure
-    features: Dict[str, Any]         # Additional features (color, etc.)
+    color_sequence: List[List[float]] # LAB color values along edge
+    confidence_sequence: List[float]  # Color sampling confidence scores
 ```
 
 ## Future Enhancements
 
-- [ ] Edge matching using Dynamic Time Warping (DTW)
+- [ ] Edge matching using Dynamic Time Warping (DTW) with shape and color descriptors
 - [ ] Automatic puzzle assembly algorithm
+- [ ] Real-time piece detection from camera feed
+- [ ] Support for irregular puzzle shapes
 
 ## Authors
 
