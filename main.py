@@ -21,7 +21,8 @@ from src.utils.visualization import (
     create_edge_classification_visualization,
     create_summary_dashboard,
     create_shape_analysis_visualization,
-    create_shape_summary_visualization
+    create_shape_summary_visualization,
+    create_piece_classification_visualizations
 )
 from src.utils.corner_analysis import analyze_corner_detection_method
 
@@ -137,6 +138,9 @@ def main():
                             if edge_idx < len(edge_points_list):
                                 edge.points = edge_points_list[edge_idx]
                                 edge.length = len(edge_points_list[edge_idx])
+            
+            # Re-classify piece type after edges are updated
+            piece._classify_piece_type()
     
     # Step 5: Create geometry visualizations
     with Timer("Creating geometry visualizations"):
@@ -167,7 +171,11 @@ def main():
         # Create basic edge classification visualization (legacy)
         create_edge_classification_visualization(piece_results, dirs['classification'])
     
-    # Step 7: Create final summary
+    # Step 7: Piece classification visualization
+    with Timer("Creating piece classification visualizations"):
+        create_piece_classification_visualizations(pieces, dirs['base'])
+    
+    # Step 8: Create final summary
     total_time = time.time() - start_time
     with Timer("Creating summary dashboard"):
         create_summary_dashboard(piece_count, total_time, piece_results, dirs['base'])

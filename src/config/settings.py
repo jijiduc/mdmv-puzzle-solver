@@ -35,7 +35,7 @@ DEBUG_DIRS = {
     # Legacy mappings for compatibility
     'masks': 'debug/02_preprocessing/masks',
     'contours': 'debug/03_detection/contours',
-    'edge_types': 'debug/07_piece_classification/edge_types',
+    'edge_types': 'debug/06_features/shape/edge_types',
     'edges': 'debug/06_features/shape'
 }
 

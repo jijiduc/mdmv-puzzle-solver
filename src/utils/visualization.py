@@ -211,12 +211,14 @@ def create_edge_classification_visualization(piece_results: List[Dict[str, Any]]
     # Simple edge type summary - functionality moved to shape analysis
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create simple summary file
-    with open(os.path.join(output_dir, 'edge_summary.txt'), 'w') as f:
-        f.write("Edge Classification Summary\n")
-        f.write("=" * 30 + "\n")
-        f.write(f"Total pieces processed: {len(piece_results)}\n")
-        f.write("Note: Detailed edge analysis available in 06_features/shape/\n")
+    # Only create summary file if not in piece classification directory
+    if '07_piece_classification' not in output_dir:
+        # Create simple summary file
+        with open(os.path.join(output_dir, 'edge_summary.txt'), 'w') as f:
+            f.write("Edge Classification Summary\n")
+            f.write("=" * 30 + "\n")
+            f.write(f"Total pieces processed: {len(piece_results)}\n")
+            f.write("Note: Detailed edge analysis available in 06_features/shape/\n")
 
 
 def create_summary_dashboard(piece_count: int, processing_time: float, 
@@ -584,3 +586,538 @@ def create_shape_summary_visualization(pieces: List[Any], output_dir: str):
     stats_file = os.path.join(summary_dir, 'statistics.txt')
     with open(stats_file, 'w') as f:
         f.write(stats_text)
+
+
+# Piece classification visualization functions
+
+def create_piece_classification_visualizations(pieces: List[Any], output_base_dir: str):
+    """Create comprehensive piece classification visualizations.
+    
+    Args:
+        pieces: List of Piece objects with classification
+        output_base_dir: Base output directory (debug/)
+    """
+    # Create main classification directory
+    class_dir = os.path.join(output_base_dir, '07_piece_classification')
+    os.makedirs(class_dir, exist_ok=True)
+    
+    # Create subdirectories
+    pieces_dir = os.path.join(class_dir, 'pieces')
+    os.makedirs(pieces_dir, exist_ok=True)
+    
+    # 1. Create main overview visualization
+    create_classification_overview(pieces, class_dir)
+    
+    # 2. Create individual piece classification visualizations
+    for piece in pieces:
+        create_individual_piece_classification(piece, pieces_dir)
+    
+    # 3. Create classification statistics dashboard
+    create_classification_statistics(pieces, class_dir)
+    
+    # 4. Create validation visualization
+    create_classification_validation(pieces, class_dir)
+    
+    print(f"Created piece classification visualizations in {class_dir}")
+
+
+def create_classification_overview(pieces: List[Any], output_dir: str):
+    """Create overview showing all pieces arranged by type."""
+    # Separate pieces by type
+    corner_pieces = [p for p in pieces if p.piece_type == 'corner']
+    edge_pieces = [p for p in pieces if p.piece_type == 'edge']
+    middle_pieces = [p for p in pieces if p.piece_type == 'middle']
+    unknown_pieces = [p for p in pieces if p.piece_type is None or p.piece_type not in ['corner', 'edge', 'middle']]
+    
+    # Calculate layout
+    max_pieces_per_row = 8
+    piece_size = 150  # Size of each piece display
+    padding = 20
+    
+    # Calculate required rows for each type
+    n_corner_rows = max(1, (len(corner_pieces) + max_pieces_per_row - 1) // max_pieces_per_row)
+    n_edge_rows = max(1, (len(edge_pieces) + max_pieces_per_row - 1) // max_pieces_per_row)
+    n_middle_rows = max(1, (len(middle_pieces) + max_pieces_per_row - 1) // max_pieces_per_row)
+    n_unknown_rows = max(1, (len(unknown_pieces) + max_pieces_per_row - 1) // max_pieces_per_row) if unknown_pieces else 0
+    
+    # Calculate canvas size
+    canvas_width = max_pieces_per_row * (piece_size + padding) + padding
+    section_height = lambda n_rows: n_rows * (piece_size + padding) + padding + 40  # 40 for title
+    
+    total_height = (section_height(n_corner_rows) + section_height(n_edge_rows) + 
+                   section_height(n_middle_rows) + (section_height(n_unknown_rows) if unknown_pieces else 0))
+    
+    # Create canvas
+    canvas = np.ones((total_height, canvas_width, 3), dtype=np.uint8) * 255
+    
+    # Color schemes for backgrounds
+    colors = {
+        'corner': (255, 200, 200),  # Light red
+        'edge': (200, 200, 255),    # Light blue
+        'middle': (200, 255, 200),  # Light green
+        'unknown': (230, 230, 230)  # Light gray
+    }
+    
+    y_offset = 0
+    
+    # Helper function to draw a section
+    def draw_section(pieces_list, piece_type, title, y_start):
+        if not pieces_list and piece_type != 'unknown':
+            return y_start
+            
+        n_rows = max(1, (len(pieces_list) + max_pieces_per_row - 1) // max_pieces_per_row)
+        section_h = section_height(n_rows)
+        
+        # Draw background
+        cv2.rectangle(canvas, (0, y_start), (canvas_width, y_start + section_h), 
+                     colors[piece_type], -1)
+        
+        # Draw title
+        cv2.putText(canvas, title, (padding, y_start + 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
+        
+        # Draw pieces
+        for idx, piece in enumerate(pieces_list):
+            row = idx // max_pieces_per_row
+            col = idx % max_pieces_per_row
+            
+            x = col * (piece_size + padding) + padding
+            y = y_start + 50 + row * (piece_size + padding)
+            
+            # Get piece image
+            piece_img = piece.image
+            piece_mask = piece.mask
+            
+            # Create masked image
+            masked_img = cv2.bitwise_and(piece_img, piece_img, mask=piece_mask)
+            
+            # Find bounding box of the piece
+            contours, _ = cv2.findContours(piece_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                x_min, y_min, w, h = cv2.boundingRect(contours[0])
+                cropped = masked_img[y_min:y_min+h, x_min:x_min+w]
+                
+                # Resize to fit in allocated space
+                scale = min(piece_size / w, piece_size / h) * 0.9
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                resized = cv2.resize(cropped, (new_w, new_h))
+                
+                # Center in allocated space
+                x_offset = (piece_size - new_w) // 2
+                y_offset = (piece_size - new_h) // 2
+                
+                # Place on canvas
+                canvas[y + y_offset:y + y_offset + new_h, 
+                      x + x_offset:x + x_offset + new_w] = resized
+                
+                # Draw piece index
+                cv2.putText(canvas, f"#{piece.index + 1}", (x + 5, y + piece_size - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                
+                # Highlight flat edges
+                if hasattr(piece, 'edges'):
+                    for edge_idx, edge in enumerate(piece.edges):
+                        if edge.edge_type == 'flat':
+                            # Draw a small indicator
+                            indicator_pos = {
+                                0: (x + piece_size//2, y + 5),      # Top
+                                1: (x + piece_size - 5, y + piece_size//2),  # Right
+                                2: (x + piece_size//2, y + piece_size - 5),  # Bottom
+                                3: (x + 5, y + piece_size//2)       # Left
+                            }
+                            if edge_idx in indicator_pos:
+                                cv2.circle(canvas, indicator_pos[edge_idx], 5, (255, 255, 0), -1)
+        
+        return y_start + section_h
+    
+    # Draw each section
+    y_offset = draw_section(corner_pieces, 'corner', f'Corner Pieces ({len(corner_pieces)})', y_offset)
+    y_offset = draw_section(edge_pieces, 'edge', f'Edge Pieces ({len(edge_pieces)})', y_offset)
+    y_offset = draw_section(middle_pieces, 'middle', f'Middle Pieces ({len(middle_pieces)})', y_offset)
+    if unknown_pieces:
+        y_offset = draw_section(unknown_pieces, 'unknown', f'Unknown Pieces ({len(unknown_pieces)})', y_offset)
+    
+    cv2.imwrite(os.path.join(output_dir, 'piece_classification_overview.png'), canvas)
+
+
+def create_individual_piece_classification(piece: Any, output_dir: str):
+    """Create detailed classification visualization for a single piece."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # Left: Piece image with edge overlay
+    piece_img = piece.image.copy()
+    
+    # Draw edges with classification colors
+    edge_colors = {
+        'flat': (0, 255, 255),      # Yellow
+        'convex': (0, 0, 255),      # Red
+        'concave': (255, 0, 0),     # Blue
+        'unknown': (128, 128, 128)  # Gray
+    }
+    
+    edge_names = ['Top', 'Right', 'Bottom', 'Left']
+    flat_edges = []
+    
+    for edge_idx, edge in enumerate(piece.edges):
+        if hasattr(edge, 'points') and edge.points:
+            points = np.array(edge.points)
+            color = edge_colors.get(edge.edge_type, edge_colors['unknown'])
+            
+            # Draw edge with appropriate thickness
+            thickness = 3 if edge.edge_type == 'flat' else 2
+            for i in range(len(points) - 1):
+                cv2.line(piece_img, tuple(points[i]), tuple(points[i+1]), color, thickness)
+            
+            if edge.edge_type == 'flat':
+                flat_edges.append(edge_names[edge_idx])
+            
+            # Add edge label
+            if len(points) > 0:
+                mid_point = points[len(points)//2]
+                cv2.putText(piece_img, edge_names[edge_idx], tuple(mid_point),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    # Draw corners
+    if piece.corners:
+        for i, corner in enumerate(piece.corners):
+            cv2.circle(piece_img, tuple(corner), 8, (0, 255, 0), -1)
+            cv2.putText(piece_img, f"C{i+1}", (corner[0]+10, corner[1]), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    
+    # Display piece image
+    ax1.imshow(cv2.cvtColor(piece_img, cv2.COLOR_BGR2RGB))
+    piece_type_str = piece.piece_type.upper() if piece.piece_type else 'UNKNOWN'
+    ax1.set_title(f'Piece #{piece.index + 1} - Type: {piece_type_str}', fontweight='bold')
+    ax1.axis('off')
+    
+    # Right: Classification details
+    ax2.axis('off')
+    
+    # Create text information
+    info_text = f"Piece Classification Details\n{'='*30}\n\n"
+    info_text += f"Piece Index: {piece.index + 1}\n"
+    info_text += f"Piece Type: {piece.piece_type if piece.piece_type else 'unknown'}\n"
+    info_text += f"Number of Flat Edges: {len(flat_edges)}\n"
+    if flat_edges:
+        info_text += f"Flat Edge Positions: {', '.join(flat_edges)}\n"
+    info_text += f"\nEdge Classification:\n{'-'*20}\n"
+    
+    for edge_idx, edge in enumerate(piece.edges):
+        edge_type = edge.edge_type if hasattr(edge, 'edge_type') else 'unknown'
+        confidence = edge.confidence if hasattr(edge, 'confidence') else 0.0
+        sub_type = edge.sub_type if hasattr(edge, 'sub_type') else 'N/A'
+        
+        info_text += f"{edge_names[edge_idx]:6} - {edge_type:8} "
+        if sub_type and sub_type != 'N/A':
+            info_text += f"({sub_type}) "
+        info_text += f"[conf: {confidence:.2f}]\n"
+    
+    # Add validation notes
+    info_text += f"\nValidation:\n{'-'*20}\n"
+    
+    # Check if corner piece has adjacent flat edges
+    if piece.piece_type == 'corner':
+        flat_indices = [i for i, edge in enumerate(piece.edges) if edge.edge_type == 'flat']
+        if len(flat_indices) == 2:
+            diff = abs(flat_indices[1] - flat_indices[0])
+            if diff == 1 or diff == 3:
+                info_text += "✓ Flat edges are adjacent (valid corner)\n"
+            else:
+                info_text += "✗ Flat edges are opposite (invalid corner)\n"
+    
+    # Check expected number of flat edges
+    expected_flat = {'corner': 2, 'edge': 1, 'middle': 0}
+    actual_flat = len(flat_edges)
+    if piece.piece_type in expected_flat:
+        if actual_flat == expected_flat[piece.piece_type]:
+            info_text += f"✓ Correct number of flat edges ({actual_flat})\n"
+        else:
+            info_text += f"✗ Unexpected flat edge count: {actual_flat} (expected {expected_flat[piece.piece_type]})\n"
+    
+    ax2.text(0.05, 0.95, info_text, transform=ax2.transAxes, 
+             fontfamily='monospace', fontsize=10, verticalalignment='top')
+    
+    # Add color legend
+    legend_y = 0.3
+    for edge_type, color in edge_colors.items():
+        rgb_color = np.array(color[::-1]) / 255.0  # Convert BGR to RGB and normalize
+        ax2.add_patch(patches.Rectangle((0.05, legend_y), 0.1, 0.05, 
+                                       facecolor=rgb_color, edgecolor='black'))
+        ax2.text(0.18, legend_y + 0.025, edge_type.capitalize(), 
+                transform=ax2.transAxes, verticalalignment='center')
+        legend_y -= 0.07
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'piece_{piece.index+1:02d}_classification.png'), 
+                dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def create_classification_statistics(pieces: List[Any], output_dir: str):
+    """Create classification statistics dashboard."""
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle('Piece Classification Statistics', fontsize=16, fontweight='bold')
+    
+    # Count piece types
+    type_counts = {'corner': 0, 'edge': 0, 'middle': 0, 'unknown': 0}
+    for piece in pieces:
+        piece_type = piece.piece_type if piece.piece_type and piece.piece_type in type_counts else 'unknown'
+        type_counts[piece_type] += 1
+    
+    # 1. Pie chart of piece type distribution
+    labels = [k for k, v in type_counts.items() if v > 0]
+    sizes = [v for v in type_counts.values() if v > 0]
+    colors = ['#ff9999', '#9999ff', '#99ff99', '#cccccc']
+    
+    ax1.pie(sizes, labels=labels, autopct='%1.0f%%', colors=colors[:len(labels)], startangle=90)
+    ax1.set_title('Piece Type Distribution')
+    
+    # 2. Bar chart comparing expected vs actual
+    # Estimate expected counts based on total pieces
+    total_pieces = len(pieces)
+    
+    # Common puzzle sizes and their expected counts
+    puzzle_sizes = {
+        6: (4, 2, 0),      # 2x3
+        12: (4, 8, 0),     # 3x4
+        20: (4, 12, 4),    # 4x5
+        24: (4, 14, 6),    # 4x6
+        30: (4, 16, 10),   # 5x6
+        42: (4, 20, 18),   # 6x7
+        48: (4, 20, 24),   # 6x8
+        49: (4, 24, 21),   # 7x7
+        56: (4, 24, 28),   # 7x8
+        63: (4, 26, 33),   # 7x9
+        64: (4, 24, 36),   # 8x8
+    }
+    
+    # Find closest puzzle size
+    closest_size = min(puzzle_sizes.keys(), key=lambda x: abs(x - total_pieces))
+    expected_corner, expected_edge, expected_middle = puzzle_sizes[closest_size]
+    
+    categories = ['Corner', 'Edge', 'Middle']
+    expected = [expected_corner, expected_edge, expected_middle]
+    actual = [type_counts['corner'], type_counts['edge'], type_counts['middle']]
+    
+    x = np.arange(len(categories))
+    width = 0.35
+    
+    bars1 = ax2.bar(x - width/2, expected, width, label='Expected', color='lightblue')
+    bars2 = ax2.bar(x + width/2, actual, width, label='Actual', color='lightgreen')
+    
+    ax2.set_xlabel('Piece Type')
+    ax2.set_ylabel('Count')
+    ax2.set_title(f'Expected vs Actual Counts (assuming {closest_size}-piece puzzle)')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(categories)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Add value labels on bars
+    for bars in [bars1, bars2]:
+        for bar in bars:
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{int(height)}', ha='center', va='bottom')
+    
+    # 3. Summary table
+    ax3.axis('off')
+    
+    table_data = [
+        ['Total Pieces', str(total_pieces)],
+        ['Corner Pieces', f"{type_counts['corner']} (expected: {expected_corner})"],
+        ['Edge Pieces', f"{type_counts['edge']} (expected: {expected_edge})"],
+        ['Middle Pieces', f"{type_counts['middle']} (expected: {expected_middle})"],
+        ['Unknown/Invalid', str(type_counts['unknown'])],
+        ['', ''],
+        ['Classification Accuracy', f"{(1 - type_counts['unknown']/total_pieces)*100:.1f}%"],
+    ]
+    
+    # Check for anomalies
+    anomalies = []
+    if type_counts['corner'] != 4:
+        anomalies.append(f"Incorrect corner count: {type_counts['corner']} (should be 4)")
+    if type_counts['unknown'] > 0:
+        anomalies.append(f"Found {type_counts['unknown']} unclassified pieces")
+    if type_counts['corner'] + type_counts['edge'] + type_counts['middle'] != total_pieces - type_counts['unknown']:
+        anomalies.append("Total count mismatch")
+    
+    if anomalies:
+        table_data.append(['', ''])
+        table_data.append(['Anomalies:', ''])
+        for anomaly in anomalies:
+            table_data.append(['', anomaly])
+    
+    table = ax3.table(cellText=table_data, loc='center', cellLoc='left')
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.5)
+    ax3.set_title('Classification Summary', fontweight='bold', pad=20)
+    
+    # 4. Edge type distribution
+    edge_type_counts = {'flat': 0, 'convex': 0, 'concave': 0, 'unknown': 0}
+    for piece in pieces:
+        if hasattr(piece, 'edges'):
+            for edge in piece.edges:
+                edge_type = edge.edge_type if hasattr(edge, 'edge_type') else 'unknown'
+                if edge_type in edge_type_counts:
+                    edge_type_counts[edge_type] += 1
+    
+    edge_labels = list(edge_type_counts.keys())
+    edge_values = list(edge_type_counts.values())
+    
+    ax4.bar(edge_labels, edge_values, color=['yellow', 'red', 'blue', 'gray'])
+    ax4.set_xlabel('Edge Type')
+    ax4.set_ylabel('Count')
+    ax4.set_title('Edge Type Distribution')
+    ax4.grid(True, alpha=0.3)
+    
+    # Add value labels
+    for i, v in enumerate(edge_values):
+        ax4.text(i, v + 0.5, str(v), ha='center', va='bottom')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'classification_summary.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def create_classification_validation(pieces: List[Any], output_dir: str):
+    """Create validation visualization for potential classification errors."""
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle('Classification Validation', fontsize=16, fontweight='bold')
+    axes = axes.flatten()
+    
+    # Find potential issues
+    issues = {
+        'wrong_corner_count': [],
+        'invalid_flat_arrangement': [],
+        'low_confidence': [],
+        'type_mismatch': []
+    }
+    
+    for piece in pieces:
+        # Check for wrong number of flat edges
+        flat_count = sum(1 for edge in piece.edges if edge.edge_type == 'flat')
+        expected_flat = {'corner': 2, 'edge': 1, 'middle': 0}
+        
+        if piece.piece_type in expected_flat and flat_count != expected_flat[piece.piece_type]:
+            issues['type_mismatch'].append({
+                'piece': piece,
+                'expected': expected_flat[piece.piece_type],
+                'actual': flat_count
+            })
+        
+        # Check corner pieces for non-adjacent flat edges
+        if piece.piece_type == 'corner' and flat_count == 2:
+            flat_indices = [i for i, edge in enumerate(piece.edges) if edge.edge_type == 'flat']
+            diff = abs(flat_indices[1] - flat_indices[0])
+            if diff != 1 and diff != 3:
+                issues['invalid_flat_arrangement'].append(piece)
+        
+        # Check for low confidence classifications
+        for edge in piece.edges:
+            if hasattr(edge, 'confidence') and edge.confidence < 0.5:
+                issues['low_confidence'].append({
+                    'piece': piece,
+                    'edge_idx': edge.edge_idx,
+                    'confidence': edge.confidence
+                })
+                break
+    
+    # Visualization for each issue type
+    issue_titles = [
+        'Type vs Flat Edge Mismatch',
+        'Invalid Flat Edge Arrangement',
+        'Low Confidence Classifications',
+        'Summary'
+    ]
+    
+    for idx, (ax, title) in enumerate(zip(axes, issue_titles)):
+        ax.set_title(title, fontweight='bold')
+        
+        if idx == 0:  # Type mismatch
+            if issues['type_mismatch']:
+                data = []
+                for item in issues['type_mismatch'][:10]:  # Show max 10
+                    piece = item['piece']
+                    data.append([
+                        f"Piece {piece.index + 1}",
+                        piece.piece_type,
+                        str(item['expected']),
+                        str(item['actual'])
+                    ])
+                
+                ax.axis('off')
+                table = ax.table(cellText=data,
+                               colLabels=['Piece', 'Type', 'Expected Flat', 'Actual Flat'],
+                               cellLoc='center',
+                               loc='center')
+                table.auto_set_font_size(False)
+                table.set_fontsize(9)
+                table.scale(1, 1.5)
+            else:
+                ax.text(0.5, 0.5, 'No type mismatches found', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.axis('off')
+        
+        elif idx == 1:  # Invalid flat arrangement
+            if issues['invalid_flat_arrangement']:
+                piece = issues['invalid_flat_arrangement'][0]  # Show first one
+                piece_img = piece.image.copy()
+                
+                # Highlight flat edges
+                for edge_idx, edge in enumerate(piece.edges):
+                    if edge.edge_type == 'flat' and hasattr(edge, 'points'):
+                        points = np.array(edge.points)
+                        for i in range(len(points) - 1):
+                            cv2.line(piece_img, tuple(points[i]), tuple(points[i+1]), (0, 255, 255), 3)
+                
+                ax.imshow(cv2.cvtColor(piece_img, cv2.COLOR_BGR2RGB))
+                ax.set_xlabel(f'Piece {piece.index + 1}: Non-adjacent flat edges')
+                ax.axis('off')
+            else:
+                ax.text(0.5, 0.5, 'All corner pieces have adjacent flat edges', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.axis('off')
+        
+        elif idx == 2:  # Low confidence
+            if issues['low_confidence']:
+                confidences = [item['confidence'] for item in issues['low_confidence']]
+                piece_indices = [item['piece'].index + 1 for item in issues['low_confidence']]
+                
+                ax.bar(range(len(confidences)), confidences, color='orange')
+                ax.set_xlabel('Piece Index')
+                ax.set_ylabel('Confidence')
+                ax.set_title(f'Low Confidence Edges (< 0.5)')
+                ax.set_xticks(range(len(confidences)))
+                ax.set_xticklabels(piece_indices, rotation=45)
+                ax.axhline(y=0.5, color='r', linestyle='--', label='Threshold')
+                ax.legend()
+                ax.grid(True, alpha=0.3)
+            else:
+                ax.text(0.5, 0.5, 'All classifications have high confidence', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.axis('off')
+        
+        else:  # Summary
+            ax.axis('off')
+            summary_text = "Validation Summary\n" + "="*20 + "\n\n"
+            summary_text += f"Total pieces analyzed: {len(pieces)}\n"
+            summary_text += f"Type mismatches: {len(issues['type_mismatch'])}\n"
+            summary_text += f"Invalid corner arrangements: {len(issues['invalid_flat_arrangement'])}\n"
+            summary_text += f"Low confidence edges: {len(issues['low_confidence'])}\n\n"
+            
+            if not any(issues.values()):
+                summary_text += "✓ All pieces passed validation!"
+            else:
+                summary_text += "⚠ Issues found - review highlighted pieces"
+            
+            ax.text(0.1, 0.9, summary_text, transform=ax.transAxes,
+                   fontfamily='monospace', fontsize=12, verticalalignment='top')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'classification_validation.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+
+

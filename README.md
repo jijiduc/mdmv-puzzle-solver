@@ -26,7 +26,7 @@ This project implements a complete pipeline for analyzing jigsaw puzzle pieces f
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/mdmv-puzzle-solver.git
+git clone https://github.com/jijiduc/mdmv-puzzle-solver.git
 cd mdmv-puzzle-solver
 ```
 
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 ### Basic Usage
 
 ```bash
-python main.py --image picture/puzzle_24-1/b-1.jpg
+python main.py --image <image path file>
 ```
 
 ### Command Line Options
@@ -59,7 +59,7 @@ python main.py --image picture/puzzle_24-1/b-1.jpg
 ### Example with Custom Settings
 
 ```bash
-python main.py --image picture/puzzle_49-1/b-1.jpg --output results/ --debug
+python main.py --image <image path file> --output results/ --debug
 ```
 
 ## Project Structure
@@ -196,39 +196,14 @@ class EdgeSegment:
     features: Dict[str, Any]         # Additional features (color, etc.)
 ```
 
-## Results
-
-### Shape Classification Performance
-
-The enhanced shape classification system provides excellent results:
-
-**Sample Analysis (6-piece puzzle)**:
-- **Total edges analyzed**: 24
-- **Classification accuracy**: 100% visual correlation with curvature data
-- **Average confidence**: 0.790 (high reliability)
-- **Edge distribution**:
-  - Flat edges: 41.7% (appropriate for puzzle borders)
-  - Interlocking edges: 58.3% (convex tabs + concave sockets)
-
-**Key Improvements**:
-- ✅ **Eliminated false classifications**: No more incorrect "flat" labels on curved edges
-- ✅ **Curvature correlation**: Classifications match visual curvature profiles
-- ✅ **Mathematical precision**: Uses proper geometric terminology
-- ✅ **Multi-metric robustness**: Combines distance and curvature analysis
-- ✅ **Confidence scoring**: Provides reliability measures for each classification
-
 ## Future Enhancements
 
 - [ ] Edge matching using Dynamic Time Warping (DTW)
 - [ ] Automatic puzzle assembly algorithm
-- [ ] Machine learning-based shape feature enhancement
-- [ ] Real-time piece tracking for interactive assembly
-- [ ] Support for irregular and non-rectangular puzzle shapes
-- [ ] Advanced texture and color-based matching
 
-## Contributing
+## Authors
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+[Jeremy Duc](https://github.com/jijiduc) & [Alexandre Venturi](https://github.com/mastermeter)
 
 ## License
 
