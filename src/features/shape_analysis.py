@@ -8,13 +8,15 @@ from scipy.spatial.distance import cdist
 import cv2
 
 
-def calculate_curvature_profile(edge_points: np.ndarray, window_size: int = 5) -> np.ndarray:
+def calculate_curvature_profile(edge_points: np.ndarray, window_size: int = 5, 
+                               smooth: bool = True) -> np.ndarray:
     """
-    Calculate curvature at each point along the edge.
+    Calculate curvature at each point along the edge with optional smoothing.
     
     Args:
         edge_points: Array of shape (N, 2) containing edge points
         window_size: Window size for smoothing derivatives
+        smooth: Whether to apply additional smoothing
         
     Returns:
         Array of curvature values at each point
@@ -22,9 +24,14 @@ def calculate_curvature_profile(edge_points: np.ndarray, window_size: int = 5) -
     if len(edge_points) < 3:
         return np.zeros(len(edge_points))
     
-    # Smooth the points first
-    x = signal.savgol_filter(edge_points[:, 0], window_size, 3, mode='nearest')
-    y = signal.savgol_filter(edge_points[:, 1], window_size, 3, mode='nearest')
+    # Smooth the points first using Savitzky-Golay filter
+    window = min(window_size, len(edge_points))
+    if window % 2 == 0:
+        window -= 1  # Ensure odd window size
+    window = max(3, window)  # Minimum window of 3
+    
+    x = signal.savgol_filter(edge_points[:, 0], window, min(3, window-1), mode='nearest')
+    y = signal.savgol_filter(edge_points[:, 1], window, min(3, window-1), mode='nearest')
     
     # Calculate first and second derivatives
     dx = np.gradient(x)
@@ -40,6 +47,16 @@ def calculate_curvature_profile(edge_points: np.ndarray, window_size: int = 5) -
     curvature = np.zeros_like(numerator)
     valid_mask = denominator > 1e-6
     curvature[valid_mask] = numerator[valid_mask] / denominator[valid_mask]
+    
+    # Apply additional smoothing if requested
+    if smooth and len(curvature) > 10:
+        # Use median filter to remove spikes
+        from scipy.ndimage import median_filter
+        curvature = median_filter(curvature, size=min(5, len(curvature)//4))
+        
+        # Follow up with gaussian smoothing
+        from scipy.ndimage import gaussian_filter1d
+        curvature = gaussian_filter1d(curvature, sigma=1.5, mode='nearest')
     
     return curvature
 
@@ -301,8 +318,20 @@ def classify_edge_shape(edge_points: np.ndarray,
     # Combined score (weighted average)
     combined_score = 0.6 * distance_score + 0.4 * curvature_score
     
+    # Debug output for problematic edges
+    debug = False
+    # Enable debug for edges with borderline scores
+    if combined_score > 0.3 and combined_score < 0.5:
+        debug = False  # Disabled for now
+    if debug:
+        print(f"Edge classification debug (score={combined_score:.3f}):")
+        print(f"  Distance score: {distance_score:.3f}, Curvature score: {curvature_score:.3f}")
+        print(f"  Max distance: {max_distance:.1f}, Edge length: {edge_length:.1f}")
+        print(f"  Mean curvature: {mean_curvature:.3f}, Mean dist: {mean_distance:.3f}")
+    
     # Primary classification using combined metrics
-    if combined_score < 1.0:
+    # Adjusted threshold to better separate flat from curved edges
+    if combined_score < 0.4:  # Increased threshold for better flat detection
         primary_type = "flat"
         sub_type = None
         confidence = max(0, 1.0 - combined_score)
@@ -311,16 +340,27 @@ def classify_edge_shape(edge_points: np.ndarray,
         positive_area = np.sum(distances[distances > 0])
         negative_area = np.abs(np.sum(distances[distances < 0]))
         
-        if positive_area > negative_area * 1.2:  # Add slight bias to avoid flip-flopping
-            primary_type = "convex"
-        elif negative_area > positive_area * 1.2:
-            primary_type = "concave"
+        # Also consider the mean distance for better classification
+        mean_dist = np.mean(distances)
+        
+        # Additional check: if the edge has very low curvature variation, it might still be flat
+        # Also check for low confidence curved edges that might be flat
+        if (curvature_std < 0.05 and abs(mean_dist) < 2.0) or \
+           (combined_score < 0.45 and abs(mean_dist) < 3.0):
+            primary_type = "flat"
+            confidence = 0.6  # Lower confidence for this secondary classification
         else:
-            # Use curvature sign to break ties
-            if np.mean(distances) > 0:
+            # Improved logic considering both area and mean distance
+            if positive_area > negative_area * 1.1 or (positive_area > negative_area * 0.9 and mean_dist > 0.5):
                 primary_type = "convex"
-            else:
+            elif negative_area > positive_area * 1.1 or (negative_area > positive_area * 0.9 and mean_dist < -0.5):
                 primary_type = "concave"
+            else:
+                # Use mean distance for ambiguous cases
+                if mean_dist > 0:
+                    primary_type = "convex"
+                else:
+                    primary_type = "concave"
         
         # Calculate symmetry for sub-type using improved method
         symmetry_score = calculate_shape_symmetry(edge_points)

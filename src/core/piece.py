@@ -3,6 +3,7 @@
 import numpy as np
 from typing import List, Tuple, Optional, Dict, Any
 from dataclasses import dataclass, field
+from ..features.edge_matching import EdgeMatch
 
 
 @dataclass
@@ -20,8 +21,37 @@ class EdgeSegment:
     color_sequence: List[List[float]] = field(default_factory=list)  # LAB color sequence
     confidence_sequence: List[float] = field(default_factory=list)
     normalized_points: List[Tuple[float, float]] = field(default_factory=list)
+    texture_descriptor: Optional[Dict[str, np.ndarray]] = None  # Texture features
     piece_idx: int = -1
     edge_idx: int = -1
+    
+    # New fields for improved matching
+    direction_vector: Optional[Tuple[float, float]] = None  # Start to end direction
+    start_point: Optional[Tuple[int, int]] = None
+    end_point: Optional[Tuple[int, int]] = None
+    normal_vector: Optional[Tuple[float, float]] = None  # Perpendicular to edge
+    
+    def calculate_direction_vectors(self):
+        """Calculate direction and normal vectors for this edge."""
+        if not self.points or len(self.points) < 2:
+            return
+            
+        # Set start and end points
+        self.start_point = self.points[0]
+        self.end_point = self.points[-1]
+        
+        # Calculate direction vector (normalized)
+        dx = self.end_point[0] - self.start_point[0]
+        dy = self.end_point[1] - self.start_point[1]
+        length = np.sqrt(dx*dx + dy*dy)
+        
+        if length > 0:
+            self.direction_vector = (dx/length, dy/length)
+            # Normal vector (perpendicular, pointing "outward")
+            self.normal_vector = (-dy/length, dx/length)
+        else:
+            self.direction_vector = (0.0, 0.0)
+            self.normal_vector = (0.0, 0.0)
 
 
 class Piece:
@@ -53,7 +83,10 @@ class Piece:
         
         # Matching information
         self.neighbors: Dict[int, Optional['Piece']] = {0: None, 1: None, 2: None, 3: None}
-        self.edge_matches: Dict[int, List[Tuple[int, int, float]]] = {}  # edge_idx -> [(piece_idx, edge_idx, score)]
+        self.edge_matches: Dict[int, List[EdgeMatch]] = {}  # edge_idx -> [EdgeMatch objects]
+        
+        # Color patterns for meaningful edges (non-flat)
+        self.edge_color_patterns: Dict[int, Dict[str, Any]] = {}  # edge_idx -> color pattern data
         
         # Calculate centroid
         self._calculate_centroid()
@@ -218,6 +251,57 @@ class Piece:
         new_point = rot_matrix @ np.array([x, y, 1])
         return (int(new_point[0]), int(new_point[1]))
     
+    def add_edge_match(self, edge_idx: int, match: EdgeMatch) -> None:
+        """Add a match for a specific edge.
+        
+        Args:
+            edge_idx: Index of the edge on this piece
+            match: EdgeMatch object containing match details
+        """
+        if edge_idx not in self.edge_matches:
+            self.edge_matches[edge_idx] = []
+        self.edge_matches[edge_idx].append(match)
+        # Sort by similarity score (descending)
+        self.edge_matches[edge_idx].sort(key=lambda m: m.similarity_score, reverse=True)
+    
+    def get_best_match(self, edge_idx: int) -> Optional[EdgeMatch]:
+        """Get the best match for a specific edge.
+        
+        Args:
+            edge_idx: Index of the edge
+            
+        Returns:
+            Best EdgeMatch or None if no matches
+        """
+        if edge_idx in self.edge_matches and self.edge_matches[edge_idx]:
+            return self.edge_matches[edge_idx][0]
+        return None
+    
+    def get_edge_matches(self, edge_idx: int, min_score: float = 0.0) -> List[EdgeMatch]:
+        """Get all matches for an edge above a minimum score.
+        
+        Args:
+            edge_idx: Index of the edge
+            min_score: Minimum similarity score threshold
+            
+        Returns:
+            List of EdgeMatch objects above the threshold
+        """
+        if edge_idx not in self.edge_matches:
+            return []
+        return [m for m in self.edge_matches[edge_idx] if m.similarity_score >= min_score]
+    
+    def clear_edge_matches(self, edge_idx: Optional[int] = None) -> None:
+        """Clear matches for a specific edge or all edges.
+        
+        Args:
+            edge_idx: Index of edge to clear, or None to clear all
+        """
+        if edge_idx is None:
+            self.edge_matches.clear()
+        elif edge_idx in self.edge_matches:
+            del self.edge_matches[edge_idx]
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert piece to dictionary for serialization."""
         return {
@@ -239,7 +323,11 @@ class Piece:
                     'curvature': edge.curvature,
                     'edge_idx': edge.edge_idx
                 } for edge in self.edges
-            ]
+            ],
+            'edge_matches': {
+                str(edge_idx): [match.to_dict() for match in matches]
+                for edge_idx, matches in self.edge_matches.items()
+            }
         }
     
     @classmethod

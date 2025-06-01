@@ -223,9 +223,9 @@ def detect_puzzle_pieces(img_path: str, threshold_value: int, min_area: int) -> 
         tiny_closing_kernel = np.ones((5, 5), np.uint8)
         filled_mask = cv2.morphologyEx(filled_mask, cv2.MORPH_CLOSE, tiny_closing_kernel)
         
-        # 4. Minimal dilation to clean up edges without distortion
-        small_dilation_kernel = np.ones((2, 2), np.uint8)
-        processed_mask = cv2.dilate(filled_mask, small_dilation_kernel, iterations=1)
+        # 4. Skip dilation to maintain precise edge boundaries
+        # This ensures color sampling stays within piece boundaries
+        processed_mask = filled_mask
         
         # Find and filter contours
         contours, _ = cv2.findContours(processed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

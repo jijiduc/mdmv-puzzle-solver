@@ -6,6 +6,7 @@ import os
 from typing import Dict, List, Tuple, Any, Optional
 
 from .color_analysis import extract_edge_color_sequence, normalize_edge_colors
+from .texture_analysis import extract_edge_texture_descriptor
 from ..config.settings import DEFAULT_TARGET_EDGE_POINTS
 
 
@@ -91,7 +92,7 @@ def normalize_edge_points(points: List[Tuple[int, int]], target_points: int = DE
 
 def extract_dtw_edge_features(piece_img: np.ndarray, edge_points: List[Tuple[int, int]], 
                              corner1: Tuple[int, int], corner2: Tuple[int, int], 
-                             edge_index: int) -> Dict[str, Any]:
+                             edge_index: int, piece_mask: Optional[np.ndarray] = None) -> Dict[str, Any]:
     """Extract comprehensive edge features for DTW matching.
     
     Args:
@@ -100,6 +101,7 @@ def extract_dtw_edge_features(piece_img: np.ndarray, edge_points: List[Tuple[int
         corner1: First corner coordinates
         corner2: Second corner coordinates
         edge_index: Index of the edge
+        piece_mask: Optional binary mask (255 = piece, 0 = background)
         
     Returns:
         Dictionary containing edge features
@@ -107,9 +109,9 @@ def extract_dtw_edge_features(piece_img: np.ndarray, edge_points: List[Tuple[int
     if len(edge_points) == 0:
         return {}
     
-    # Extract color sequence and confidence
+    # Extract color sequence and confidence with improved sampling
     lab_sequence, confidence_sequence = extract_edge_color_sequence(
-        piece_img, edge_points, corner1, corner2)
+        piece_img, edge_points, corner1, corner2, piece_mask)
     
     # Normalize color sequence
     if len(lab_sequence) > 0:
@@ -122,6 +124,9 @@ def extract_dtw_edge_features(piece_img: np.ndarray, edge_points: List[Tuple[int
     edge_length = calculate_edge_length(edge_points)
     curvature = calculate_edge_curvature(edge_points)
     
+    # Extract texture features
+    texture_descriptor = extract_edge_texture_descriptor(piece_img, edge_points, piece_mask)
+    
     return {
         'color_sequence': lab_sequence.tolist() if len(lab_sequence) > 0 else [],
         'confidence_sequence': confidence_sequence,
@@ -131,7 +136,8 @@ def extract_dtw_edge_features(piece_img: np.ndarray, edge_points: List[Tuple[int
         'corner1': corner1,
         'corner2': corner2,
         'edge_index': edge_index,
-        'num_points': len(edge_points)
+        'num_points': len(edge_points),
+        'texture_descriptor': texture_descriptor
     }
 
 

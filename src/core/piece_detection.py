@@ -32,13 +32,32 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
     piece_img = piece.image
     piece_mask = piece.mask
     
-    # Detect contours and centroid
-    edges = cv2.Canny(piece_mask, 50, 150)
+    # Get contour points directly from mask
+    contours, _ = cv2.findContours(piece_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     
-    # Find edge points
-    edge_points = np.where(edges > 0)
-    y_edge, x_edge = edge_points[0], edge_points[1]
-    edge_coordinates = np.column_stack((x_edge, y_edge))
+    if not contours:
+        return {
+            'piece_idx': piece_index,
+            'edge_types': [],
+            'edge_deviations': [],
+            'edge_sub_types': [],
+            'edge_confidences': [],
+            'edge_points': [],
+            'edge_colors': [],
+            'corners': [],
+            'centroid': (0, 0),
+            'img': piece_img.tolist(),
+            'mask': piece_mask.tolist(),
+            'piece_type': 'unknown'
+        }
+    
+    # Use the largest contour (should be the only one)
+    contour = max(contours, key=cv2.contourArea)
+    
+    # Extract edge coordinates from contour
+    edge_coordinates = contour.squeeze()
+    if len(edge_coordinates.shape) == 1:
+        edge_coordinates = edge_coordinates.reshape(-1, 2)
     
     # Use piece's centroid
     centroid = piece.centroid
@@ -113,9 +132,9 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
             edge_confidences.append(confidence)
             edge_points_list.append(edge_points)
             
-            # Extract edge features
+            # Extract edge features with improved color sampling
             edge_features = extract_dtw_edge_features(piece_img, edge_points, 
-                                                    corners[i], corners[next_i], i)
+                                                    corners[i], corners[next_i], i, piece_mask)
             edge_colors.append(edge_features)
             
             # Update edge segment with features
@@ -127,6 +146,8 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
                 edge_segment.color_sequence = edge_features['color_sequence']
             if 'confidence_sequence' in edge_features:
                 edge_segment.confidence_sequence = edge_features['confidence_sequence']
+            if 'texture_descriptor' in edge_features:
+                edge_segment.texture_descriptor = edge_features['texture_descriptor']
         else:
             edge_types.append("unknown")
             edge_deviations.append(0)
@@ -140,6 +161,16 @@ def process_piece(piece: Piece, output_dirs: Tuple[str, ...]) -> Dict[str, Any]:
     
     # Classify piece type based on edges
     piece._classify_piece_type()
+    
+    # Store color patterns for meaningful edges
+    for edge_idx, edge in enumerate(piece.edges):
+        if edge.edge_type != "flat" and edge.color_sequence:
+            piece.edge_color_patterns[edge_idx] = {
+                'color_sequence': edge.color_sequence,
+                'confidence_sequence': edge.confidence_sequence,
+                'edge_type': edge.edge_type,
+                'sub_type': edge.sub_type
+            }
     
     # Memory cleanup
     gc.collect()

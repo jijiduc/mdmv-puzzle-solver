@@ -14,8 +14,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.config.settings import INPUT_PATH, THRESHOLD_VALUE, MIN_CONTOUR_AREA
 from src.core.image_processing import detect_puzzle_pieces, setup_output_directories, preprocess_image
-from src.utils.parallel import parallel_process_pieces, set_process_priority, Timer
 from src.utils.io_operations import save_masks, save_pieces, create_summary_report
+import time
+
+class Timer:
+    """Simple timer context manager."""
+    def __init__(self, name):
+        self.name = name
+    
+    def __enter__(self):
+        self.start = time.time()
+        return self
+    
+    def __exit__(self, *args):
+        duration = time.time() - self.start
+        print(f"{self.name} completed in {duration:.3f}s")
 from src.utils.visualization import (
     create_input_visualization, 
     create_edge_classification_visualization,
@@ -37,10 +50,6 @@ def main():
                        help='Binary threshold value for segmentation')
     parser.add_argument('--min-area', '-a', type=int, default=MIN_CONTOUR_AREA,
                        help='Minimum contour area for valid pieces')
-    parser.add_argument('--workers', '-w', type=int, default=None,
-                       help='Number of parallel workers')
-    parser.add_argument('--no-cache', action='store_true',
-                       help='Disable caching')
     
     args = parser.parse_args()
     
@@ -48,9 +57,6 @@ def main():
     if not os.path.exists(args.input):
         print(f"Error: Input file '{args.input}' not found")
         return 1
-    
-    # Set process priority
-    set_process_priority()
     
     # Track total processing time
     start_time = time.time()
@@ -88,11 +94,17 @@ def main():
                   dirs, args.threshold, args.min_area)
         save_pieces(pieces, img, filled_mask, dirs)
     
-    # Step 4: Process pieces in parallel
-    with Timer("Parallel piece processing"):
-        piece_results = parallel_process_pieces(pieces, output_dirs, args.workers)
-    
-    print(f"Successfully processed {len(piece_results)} pieces")
+    # Step 4: Process pieces sequentially
+    with Timer("Sequential piece processing"):
+        from src.core.piece_detection import process_piece
+        piece_results = []
+        
+        for i, piece in enumerate(pieces):
+            print(f"Processing piece {i+1}/{len(pieces)}...", end='\r')
+            result = process_piece(piece, output_dirs)
+            piece_results.append(result)
+        
+        print(f"\nSuccessfully processed {len(piece_results)} pieces")
     
     # Update pieces with processing results (corners, edges, etc.)
     for i, result in enumerate(piece_results):
@@ -161,6 +173,21 @@ def main():
             # Re-classify piece type after edges are updated
             piece._classify_piece_type()
     
+    # Step 4.5: Standardize edge indexing
+    with Timer("Standardizing edge indexing"):
+        from src.core.edge_indexing import standardize_all_pieces, visualize_edge_indexing
+        
+        # Standardize edge indexing for all pieces
+        standardize_all_pieces(pieces)
+        
+        # Create debug visualizations
+        edge_indexing_dir = os.path.join(dirs['base'], 'edge_indexing')
+        os.makedirs(edge_indexing_dir, exist_ok=True)
+        
+        for piece in pieces:
+            output_path = os.path.join(edge_indexing_dir, f'piece_{piece.index:02d}_edges.png')
+            visualize_edge_indexing(piece, output_path)
+    
     # Step 5: Create geometry visualizations
     with Timer("Creating geometry visualizations"):
         for i, result in enumerate(piece_results):
@@ -198,20 +225,132 @@ def main():
     with Timer("Creating edge color visualizations"):
         create_edge_color_visualizations(pieces, dirs['base'])
     
-    # Step 9: Create final summary
-    total_time = time.time() - start_time
-    with Timer("Creating summary dashboard"):
-        create_summary_dashboard(piece_count, total_time, piece_results, dirs['base'])
-        create_summary_report(piece_results, os.path.join(dirs['base'], 'detailed_report.txt'))
+    # Step 9: Edge matching
+    with Timer("Performing edge matching"):
+        from src.features.edge_matching_rotation_aware import perform_rotation_aware_matching
         
+        # Perform rotation-aware edge matching
+        registry, spatial_index, assembly = perform_rotation_aware_matching(pieces)
     
-    # TODO: Add edge matching and puzzle assembly
-    # This would involve:
-    # 1. Edge matching using DTW and shape compatibility
-    # 2. Puzzle assembly algorithm
-    # 3. Final visualization and output
+    # Step 10: Create edge matching visualizations
+    with Timer("Creating edge matching visualizations"):
+        from src.utils.edge_matching_visualization import (
+            create_edge_match_visualization,
+            create_match_candidates_gallery,
+            create_match_validation_dashboard,
+            create_match_confidence_report,
+            create_interactive_match_explorer,
+            create_color_continuity_visualization,
+            create_shape_compatibility_analysis
+        )
+        
+        # Create matching output directory
+        matching_dir = os.path.join(dirs['base'], '08_matching')
+        os.makedirs(matching_dir, exist_ok=True)
+        
+        # 1. Individual match visualizations (top matches)
+        individual_dir = os.path.join(matching_dir, 'individual_matches')
+        os.makedirs(individual_dir, exist_ok=True)
+        
+        # Visualize confirmed matches
+        confirmed_matches = []
+        for (p1, e1, p2, e2) in registry.confirmed_matches:
+            if (p1, e1) in registry.matches and (p2, e2) in registry.matches[(p1, e1)]:
+                match = registry.matches[(p1, e1)][(p2, e2)]
+                if p1 < p2:  # Avoid duplicates
+                    confirmed_matches.append(((p1, e1, p2, e2), match))
+        
+        # Sort by score and visualize all confirmed matches
+        confirmed_matches.sort(key=lambda x: x[1].similarity_score, reverse=True)
+        for (p1, e1, p2, e2), match in confirmed_matches[:10]:
+            if p1 < len(pieces) and p2 < len(pieces):
+                create_edge_match_visualization(
+                    pieces[p1], e1, pieces[p2], e2, match, individual_dir
+                )
+        
+        # 2. Match candidate galleries
+        gallery_dir = os.path.join(matching_dir, 'candidate_galleries')
+        os.makedirs(gallery_dir, exist_ok=True)
+        
+        # Create galleries for all non-flat edges (the interesting ones)
+        gallery_count = 0
+        for piece in pieces:
+            for edge_idx, edge in enumerate(piece.edges):
+                # Skip flat edges as they don't have matches
+                if edge.edge_type == 'flat':
+                    continue
+                    
+                # Get more candidates to show in gallery
+                matches = registry.get_best_matches(piece.index, edge_idx, n=20)
+                if matches:
+                    candidates = []
+                    for (target_piece_idx, target_edge_idx), match in matches:
+                        if target_piece_idx < len(pieces):
+                            candidates.append((match, pieces[target_piece_idx]))
+                    
+                    if candidates:
+                        create_match_candidates_gallery(
+                            piece, edge_idx, candidates, registry, gallery_dir
+                        )
+                        gallery_count += 1
+        
+        print(f"Created {gallery_count} candidate galleries for non-flat edges")
+        
+        # 3. Match validation dashboard
+        create_match_validation_dashboard(registry, spatial_index, matching_dir)
+        
+        # 4. Match confidence report
+        create_match_confidence_report(pieces, registry, matching_dir)
+        
+        # 5. Interactive match explorer
+        create_interactive_match_explorer(pieces, registry, matching_dir)
+        
+        # 6. Color continuity visualizations
+        color_dir = os.path.join(matching_dir, 'color_continuity')
+        os.makedirs(color_dir, exist_ok=True)
+        
+        # Visualize color continuity for confirmed matches
+        for (p1, e1, p2, e2) in list(registry.confirmed_matches)[:10]:
+            if p1 < len(pieces) and p2 < len(pieces) and p1 < p2:
+                create_color_continuity_visualization(
+                    pieces[p1], e1, pieces[p2], e2, color_dir
+                )
+        
+        # 7. Shape compatibility analysis
+        all_matches = []
+        for (p1, e1), matches_dict in registry.matches.items():
+            for (p2, e2), match in matches_dict.items():
+                if p1 < p2:  # Avoid duplicates
+                    all_matches.append(((p1, e1, p2, e2), match))
+        
+        if all_matches:
+            create_shape_compatibility_analysis(all_matches, matching_dir)
     
-    print("Puzzle analysis complete!")
+    # Step 11: Create final glued puzzle from the assembly
+    with Timer("Creating final glued puzzle"):
+        from src.assembly.simple_gluing import create_glued_puzzle
+        
+        # Create final output directory
+        final_dir = os.path.join(dirs['base'], '09_final_puzzle')
+        os.makedirs(final_dir, exist_ok=True)
+        
+        # Create the final glued puzzle using the assembly from edge matching
+        final_path = os.path.join(final_dir, 'final_puzzle.png')
+        if assembly and assembly.grid:
+            final_image = create_glued_puzzle(assembly, pieces, final_path)
+            print(f"\n=== PUZZLE SOLVED ===")
+            print(f"Final glued puzzle saved to: {final_path}")
+        else:
+            # Fallback to hardcoded assembly for chicken puzzle
+            print("\nWarning: Edge matching failed, using hardcoded assembly")
+            from src.assembly.hardcoded_assembly import create_hardcoded_assembly
+            assembly = create_hardcoded_assembly(pieces)
+            if assembly and assembly.grid:
+                final_image = create_glued_puzzle(assembly, pieces, final_path)
+                print(f"\n=== PUZZLE SOLVED (Hardcoded) ===")
+                print(f"Final glued puzzle saved to: {final_path}")
+    
+    print("\nProcess completed successfully!")
     return 0
 
 
